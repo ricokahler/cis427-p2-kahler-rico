@@ -1,0 +1,18 @@
+{
+  "name": "cis427-p2",
+  "version": "0.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Rico Kahler",
+  "license": "MIT",
+  "dependencies": {
+    "@types/node": "^8.0.46",
+    "rxjs": "^5.5.1"
+  },
+  "devDependencies": {
+    "typescript": "^2.5.3"
+  }
+}
