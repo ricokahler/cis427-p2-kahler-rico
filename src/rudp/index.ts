@@ -170,8 +170,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
 
   // connection established here
   const messageStream = (rawMessageStream
-    .do(({ info }) => console.log({ info }))
-    .filter(({ info }) => info.address === address && info.port === rudpOptions.port)
+    .filter(({ info }) => info.address === address && info.port === port)
     .map(({ message }) => message)
   );
 
