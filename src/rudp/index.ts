@@ -1,6 +1,7 @@
 import * as Udp from 'dgram';
-const server = Udp.createSocket('udp4');
+import * as Dns from 'dns';
 import { Observable, Observer } from 'rxjs';
+const server = Udp.createSocket('udp4');
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
@@ -120,12 +121,29 @@ export interface ReliableUdpClientOptions {
   port: number,
 }
 
-export async function connectToReliableUdpServer(rudpOptions: ReliableUdpClientOptions) {
+function resolveName(hostname: string) {
+  return new Promise<string[]>((resolve, reject) => {
+    Dns.resolve4(hostname, (error, addresses) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(addresses);
+      }
+    });
+  })
+}
+
+export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUdpClientOptions>) {
   const client = Udp.createSocket('udp4');
+  const address = (await resolveName(rudpOptions.host || 'localhost'))[0];
+  const port = rudpOptions.port || 8090;
+  if (!address) {
+    throw new Error(`Could not resolve hostname: "${rudpOptions.host}"`)
+  }
 
   function sendToServer(message: string) {
     return new Promise<number>((resolve, reject) => {
-      client.send(message, rudpOptions.port, rudpOptions.host, (error, bytes) => {
+      client.send(message, port, address, (error, bytes) => {
         if (error) {
           reject(error);
         } else {
@@ -152,7 +170,8 @@ export async function connectToReliableUdpServer(rudpOptions: ReliableUdpClientO
 
   // connection established here
   const messageStream = (rawMessageStream
-    // .filter(({ info }) => info.address === rudpOptions.host && info.port === rudpOptions.port)
+    .do(({ info }) => console.log({ info }))
+    .filter(({ info }) => info.address === address && info.port === rudpOptions.port)
     .map(({ message }) => message)
   );
 
