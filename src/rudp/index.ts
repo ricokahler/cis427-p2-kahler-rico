@@ -117,7 +117,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
 }
 
 export interface ReliableUdpClientOptions {
-  host: string,
+  hostname: string,
   port: number,
 }
 
@@ -135,10 +135,10 @@ function resolveName(hostname: string) {
 
 export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUdpClientOptions>) {
   const client = Udp.createSocket('udp4');
-  const address = (await resolveName(rudpOptions.host || 'localhost'))[0];
+  const address = (await resolveName(rudpOptions.hostname || 'localhost'))[0];
   const port = rudpOptions.port || 8090;
   if (!address) {
-    throw new Error(`Could not resolve hostname: "${rudpOptions.host}"`)
+    throw new Error(`Could not resolve hostname: "${rudpOptions.hostname}"`)
   }
 
   function sendToServer(message: string) {

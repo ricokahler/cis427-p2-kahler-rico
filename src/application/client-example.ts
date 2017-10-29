@@ -2,7 +2,7 @@ import { connectToReliableUdpServer } from '../rudp';
 
 async function main() {
   const socket = await connectToReliableUdpServer({
-    host: 'localhost',
+    hostname: 'localhost',
     port: 8090,
   });
 
