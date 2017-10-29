@@ -5,7 +5,7 @@ const server = Udp.createSocket('udp4');
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
-  messageStream: Observable<string>,
+  messageStream: Observable<Buffer>,
   sendMessage: (message: string) => Promise<number>,
 }
 
@@ -23,7 +23,7 @@ export interface ReliableUdpServerOptions {
 }
 
 interface MessageWithInfo {
-  message: string,
+  message: Buffer,
   info: Udp.AddressInfo
 }
 
@@ -58,10 +58,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
   });
 
   const messageStream = Observable.create((observer: Observer<MessageWithInfo>) => {
-    server.on('message', (message, info) => observer.next({
-      message: message.toString(),
-      info
-    }));
+    server.on('message', (message, info) => observer.next({ message, info }));
   }) as Observable<MessageWithInfo>;
 
   const connectionStream = Observable.create((connectionObserver: Observer<ReliableUdpSocket>) => {
@@ -71,7 +68,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
       .subscribe(messageStreamOfOneClient => {
 
         (messageStreamOfOneClient
-          .filter(({ message }) => message === '__HANDSHAKE__SYN')
+          .filter(({ message }) => message.toString() === '__HANDSHAKE__SYN')
           .subscribe(async ({ message, info }) => {
             console.log('got SYN, sending SYN-ACK...');
             await sendTo(info, '__HANDSHAKE__SYN-ACK');
@@ -79,7 +76,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
         );
 
         (messageStreamOfOneClient
-          .filter(({ message }) => message === '__HANDSHAKE__ACK')
+          .filter(({ message }) => message.toString() === '__HANDSHAKE__ACK')
           .subscribe(async ({ message, info }) => {
             console.log('got ACK, connection established');
             // connection established
@@ -94,7 +91,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
                     } else {
                       resolve(bytes);
                     }
-                  })
+                  });
                 });
               }
             };
@@ -155,7 +152,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
 
   const rawMessageStream = Observable.create((observer: Observer<MessageWithInfo>) => {
     client.addListener('message', (message, serverInfo) => {
-      observer.next({ message: message.toString(), info: serverInfo });
+      observer.next({ message, info: serverInfo });
     });
   }) as Observable<MessageWithInfo>;
 
@@ -163,7 +160,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   console.log('sending SYNC...')
   await sendToServer('__HANDSHAKE__SYN');
   // wait for the SYN-ACK
-  await rawMessageStream.filter(({ message }) => message === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
+  await rawMessageStream.filter(({ message }) => message.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
   console.log('got SYN-ACK. sending ACK...')
   // send the ACK
   await sendToServer('__HANDSHAKE__ACK');
@@ -181,4 +178,28 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   }
 
   return reliableUdpSocket;
+}
+
+interface Segment {
+  seqAck: number,
+  data: string,
+}
+
+/**
+ * 
+ * @param sendMessage 
+ * @param options 
+ */
+async function sendMessageWithWindow(sendSegment: (message: string) => Promise<number>, options: {
+  windowSize: number,
+  maxSegmentSize: number,
+}) {
+  const { windowSize, maxSegmentSize } = options;
+  let usableWindow = windowSize;
+
+  return function sendMessage(fullMessage: string) {
+    const messageLength = fullMessage.length;
+    const totalSegments = Math.ceil(messageLength / maxSegmentSize);
+
+  }
 }

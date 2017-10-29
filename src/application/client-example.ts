@@ -7,7 +7,7 @@ async function main() {
   });
 
   socket.messageStream.subscribe(message => {
-    console.log('message from server: ', message);
+    console.log('message from server: ', message.toString());
   });
 
   socket.sendMessage('this message is from the client');
