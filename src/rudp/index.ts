@@ -1,6 +1,7 @@
 import * as Udp from 'dgram';
 import * as Dns from 'dns';
 import { Observable, Observer, Subject } from 'rxjs';
+import * as uuid from 'uuid/v4';
 const server = Udp.createSocket('udp4');
 
 export interface ReliableUdpSocket {
@@ -84,20 +85,20 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
       ackStream.subscribe(async ({ message, info }) => {
         // connection established
         console.log('got ACK, connection established');
-        connectionObserver.next(new ClientConnection({
-          sendSegment: (segment: string | Buffer) => new Promise<number>((resolve, reject) => {
-            server.send(segment, info.port, info.address, (error, bytes) => {
-              if (error) {
-                reject(error);
-              } else {
-                resolve(bytes);
-              }
-            });
-          }),
-          info,
-          maxSegmentSizeInBytes,
-          windowSize,
-        }));
+        // connectionObserver.next(new ClientConnection({
+        //   sendSegment: (segment: string | Buffer) => new Promise<number>((resolve, reject) => {
+        //     server.send(segment, info.port, info.address, (error, bytes) => {
+        //       if (error) {
+        //         reject(error);
+        //       } else {
+        //         resolve(bytes);
+        //       }
+        //     });
+        //   }),
+        //   info,
+        //   maxSegmentSizeInBytes,
+        //   windowSize,
+        // }));
       });
     });
   });
@@ -235,9 +236,9 @@ class DeferredPromise<T> implements Promise<T> {
   [Symbol.toStringTag] = 'Promise' as 'Promise';
 }
 
-interface ClientConnectionOptions {
+interface MessageChannelOptions {
   sendSegment: (segment: Buffer) => Promise<number>,
-  segmentStream: Observable<string>,
+  segmentStream: Observable<Buffer>,
   clientInfo: Udp.AddressInfo,
   maxSegmentSizeInBytes: number,
   windowSize: number,
@@ -247,37 +248,44 @@ class ClientConnection implements ReliableUdpSocket {
   info: Udp.AddressInfo;
 
   sendSegment: (segment: Buffer) => Promise<number>;
-  segmentStream: Observable<string>;
+  segmentStream: Observable<Buffer>;
 
-  messageQueue: ({message: (string | Buffer), resolve: () => void} | undefined)[];
+  messageQueue: ({message: (string | Buffer), deferredPromise: DeferredPromise<void>})[];
   queueIsRunning: boolean;
 
-  constructor(options: ClientConnectionOptions) {
-    this.info = options.clientInfo;
-    this.sendSegment = options.sendSegment;
-    this.segmentStream = options.segmentStream;
-    this.messageQueue = [];
-    this.queueIsRunning = false;
+  messageChannelOptions: MessageChannelOptions;
+
+  constructor(messageChannelOptions: MessageChannelOptions) {
+    this.info = messageChannelOptions.clientInfo;
+    this.messageChannelOptions = messageChannelOptions;
   }
 
-  executeQueue() {
-    const firstMessage = this.messageQueue[0];
-    if (!firstMessage) {
-      return;
-    }
+  async executeQueue() {
     if (this.queueIsRunning) {
       return;
     }
+    const firstMessage = this.messageQueue[0];
+    if (!firstMessage) {
+      this.queueIsRunning = false;
+      return;
+    }
     
+    try {
+      await MessageChannel.send(firstMessage.message, this.messageChannelOptions);
+      firstMessage.deferredPromise.resolve();
+    } catch (e) {
+      firstMessage.deferredPromise.reject(e);
+    }
+
+    // continue to executeQueue
+    this.executeQueue();
   }
 
   sendMessage(message: string | Buffer) {
-    const deferred = new DeferredPromise<void>();
-    this.messageQueue.push({message, resolve: deferred.resolve});
-    if (!this.queueIsRunning) {
-      this.executeQueue();
-    }
-    return deferred;
+    const deferredPromise = new DeferredPromise<void>();
+    this.messageQueue.push({message, deferredPromise});
+    this.executeQueue();
+    return deferredPromise;
   }
 
   get messageStream() {
@@ -288,7 +296,27 @@ class ClientConnection implements ReliableUdpSocket {
 
 
 class MessageChannel {
-  constructor() {
+  static async send(message: string | Buffer, options: MessageChannelOptions) {
+    const channel = new MessageChannel(options);
+    await channel._send(message);
+  }
+
+  id: string;
+  private _sendSegment: (segment: Buffer) => Promise<number>;
+  private _segmentStream: Observable<Buffer>;
+  
+  private constructor(options: MessageChannelOptions) {
+    this.id = uuid();
+    this._sendSegment = options.sendSegment;
+    this._segmentStream = options.segmentStream;
+
+    
 
   }
+
+  private async _send(message: string | Buffer) {
+
+  }
+
+  
 }
