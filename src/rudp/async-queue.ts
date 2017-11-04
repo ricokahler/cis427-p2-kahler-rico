@@ -28,18 +28,21 @@ interface QueueItem<T> {
 }
 
 export default class AsyncQueue<Value> {
-  protected _queue: (QueueItem<Value> | undefined)[];
-  protected _queueIsRunning: boolean;
+  private _queue: (QueueItem<Value> | undefined)[];
+  private _queueIsRunning: boolean;
+  private _queueFinished: DeferredPromise<void>;
 
   constructor() {
     this._queue = [];
     this._queueIsRunning = false;
+    this._queueFinished = new DeferredPromise<void>();
   }
 
-  async executeQueue() {
+  private async _executeQueue() {
     const top = this._queue[0];
     if (!top) {
       this._queueIsRunning = false;
+      this._queueFinished.resolve();
       return;
     }
     const {task, deferredPromise} = top;
@@ -49,8 +52,18 @@ export default class AsyncQueue<Value> {
       deferredPromise.resolve(value);
     } catch (e) {
       deferredPromise.reject(e);
+      this._queueFinished.reject(e);
     }
-    this.executeQueue();
+    this._executeQueue();
+  }
+
+  async executeQueue() {
+    if (!this._queueIsRunning) {
+      this._queueFinished = new DeferredPromise<void>();
+      this._queueIsRunning = true;
+      this._executeQueue();
+    }
+    return this._queueFinished;
   }
 
   addTask(task: () => Promise<Value>) {
@@ -59,10 +72,26 @@ export default class AsyncQueue<Value> {
       task,
       deferredPromise
     });
-    if (!this._queueIsRunning) {
-      this._queueIsRunning = true;
-      this.executeQueue();
-    }
+    
     return deferredPromise as Promise<Value>;
   }
 }
+
+function waitAndThenSay(message: string) {
+  return new Promise<string>((resolve, reject) => {
+    setTimeout(() => resolve(message), 2000);
+  });
+}
+
+// async function main() {
+//   const asyncQueue = new AsyncQueue<string>();
+//   console.log('queue start');
+//   asyncQueue.addTask(() => waitAndThenSay('hello0')).then(console.log.bind(console));
+//   asyncQueue.addTask(() => waitAndThenSay('hello1')).then(console.log.bind(console));
+//   asyncQueue.addTask(() => waitAndThenSay('hello2')).then(console.log.bind(console));
+//   asyncQueue.addTask(() => waitAndThenSay('hello3')).then(console.log.bind(console));
+//   await asyncQueue.executeQueue();
+//   console.log('queue finished');
+// }
+
+// main();
