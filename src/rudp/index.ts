@@ -2,6 +2,7 @@ import * as Udp from 'dgram';
 import * as Dns from 'dns';
 import { Observable, Observer, Subject } from 'rxjs';
 import * as uuid from 'uuid/v4';
+import {range} from 'lodash';
 const server = Udp.createSocket('udp4');
 
 export interface ReliableUdpSocket {
@@ -182,78 +183,71 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
 }
 
 interface Segment {
+  messageId: string,
   seqAck: number,
   data: Buffer,
 }
 
-/**
- * 
- * @param sendMessage 
- * @param options 
- */
-async function sendMessageWithWindow(sendSegment: (message: string) => Promise<number>, options: {
-  windowSize: number,
-  maxSegmentSizeInBytes: number,
-}) {
-  const { windowSize, maxSegmentSizeInBytes } = options;
-  let usableWindow = windowSize;
-
-  return function sendMessage(fullMessage: string) {
-    const messageLength = Buffer.byteLength(fullMessage);
-    const totalSegments = Math.ceil(messageLength / maxSegmentSizeInBytes);
-
-    const buffer = new Buffer(fullMessage);
-
-    (Observable
-      .range(0, windowSize)
-      .map(index => index * maxSegmentSizeInBytes)
-      .map(seqNumber => buffer.slice(seqNumber, seqNumber + maxSegmentSizeInBytes))
-    );
-  }
-}
-
-class DeferredPromise<T> implements Promise<T> {
-  private _promise: Promise<T>
-  resolve: (t?: T) => void;
-  reject: (error?: any) => void;
-  then: <TResult1 = T, TResult2 = never>(
-    onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
-    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
-  ) => Promise<TResult1 | TResult2>;
-  catch: <TResult = never>(
-    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null
-  ) => Promise<T | TResult>;
-
-  constructor() {
-    this._promise = new Promise((resolve, reject) => {
-      this.resolve = resolve;
-      this.reject = reject;
-    });
-    this.then = this._promise.then.bind(this._promise);
-    this.catch = this._promise.catch.bind(this._promise);
-  }
-
-  [Symbol.toStringTag] = 'Promise' as 'Promise';
-}
-
 interface MessageChannelOptions {
-  sendSegment: (segment: Buffer) => Promise<number>,
-  segmentStream: Observable<Buffer>,
+  sendSegment: (segment: Segment) => Promise<void>,
+  segmentStream: Observable<Segment>,
   clientInfo: Udp.AddressInfo,
   maxSegmentSizeInBytes: number,
   windowSize: number,
+  segmentTimeout: number,
+}
+
+interface QueueItem<T> {
+  task: () => Promise<T>,
+  deferredPromise: DeferredPromise<T>
+}
+
+class AsyncQueue<Value> {
+  protected _queue: (QueueItem<Value> | undefined)[];
+  protected _queueIsRunning: boolean;
+
+  constructor() {
+    this._queue = [];
+    this._queueIsRunning = false;
+  }
+
+  async executeQueue() {
+    if (this._queueIsRunning) {
+      return;
+    }
+    const top = this._queue[0];
+    if (!top) {
+      this._queueIsRunning = false;
+      return;
+    }
+    const {task, deferredPromise} = top;
+    try {
+      const value = await task();
+      deferredPromise.resolve(value);
+    } catch (e) {
+      deferredPromise.reject(e);
+    }
+    this.executeQueue();
+  }
+
+  addTask(task: () => Promise<Value>) {
+    const deferredPromise = new DeferredPromise<Value>();
+    this._queue.push({
+      task,
+      deferredPromise
+    });
+    this.executeQueue();
+    return deferredPromise as Promise<Value>;
+  }
+
 }
 
 class ClientConnection implements ReliableUdpSocket {
   info: Udp.AddressInfo;
-
-  sendSegment: (segment: Buffer) => Promise<number>;
-  segmentStream: Observable<Buffer>;
+  messageChannelOptions: MessageChannelOptions;
 
   messageQueue: ({message: (string | Buffer), deferredPromise: DeferredPromise<void>})[];
   queueIsRunning: boolean;
-
-  messageChannelOptions: MessageChannelOptions;
 
   constructor(messageChannelOptions: MessageChannelOptions) {
     this.info = messageChannelOptions.clientInfo;
@@ -293,30 +287,80 @@ class ClientConnection implements ReliableUdpSocket {
   }
 }
 
-
-
 class MessageChannel {
-  static async send(message: string | Buffer, options: MessageChannelOptions) {
-    const channel = new MessageChannel(options);
-    await channel._send(message);
-  }
+  segmentQueue: Segment[];
 
-  id: string;
-  private _sendSegment: (segment: Buffer) => Promise<number>;
-  private _segmentStream: Observable<Buffer>;
-  
-  private constructor(options: MessageChannelOptions) {
-    this.id = uuid();
-    this._sendSegment = options.sendSegment;
-    this._segmentStream = options.segmentStream;
 
-    
-
-  }
-
-  private async _send(message: string | Buffer) {
-
+  constructor(options: MessageChannelOptions) {
+    this.segmentQueue = [];
   }
 
   
+}
+
+function sendMessageWithWindow(message: string | Buffer, options: MessageChannelOptions) {
+  const {
+    sendSegment,
+    segmentStream: rawSegmentStream,
+    windowSize,
+    clientInfo,
+    maxSegmentSizeInBytes,
+    segmentTimeout,
+  } = options;
+  const id = uuid();
+  
+  const segmentStreamForThisMessage = rawSegmentStream.filter(segment => segment.messageId === id);
+
+  const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
+  const totalSegments = Math.ceil(buffer.byteLength / maxSegmentSizeInBytes);
+
+  const segments = (range(totalSegments)
+    .map(i => i * maxSegmentSizeInBytes)
+    .map(seqAck => ({
+      seqAck,
+      data: buffer.slice(seqAck, seqAck + maxSegmentSizeInBytes),
+    }))
+    .map(({seqAck, data}) => ({
+      data,
+      seqAck,
+      messageId: id,
+    }) as Segment)
+  );
+
+  
+
+  const window = segments.slice(0, windowSize).map(segment => {
+    const segmentPromise = new Promise<void>(async (resolve, reject) => {
+      let gotAck = false;
+
+      (segmentStreamForThisMessage
+        .filter(s => s.seqAck >= segment.seqAck)
+        .take(1)
+        .toPromise()
+        .then(() => {
+          gotAck = true;
+          resolve();
+        })
+      );
+
+      setTimeout(() => {
+        if (!gotAck) {
+          reject('timeout occurred');
+        }
+      }, segmentTimeout);
+
+      await sendSegment(segment);
+    });
+
+    return {segment, segmentPromise};
+  }).map(async ({segment, segmentPromise}) => {
+    try {
+      // wait for the ACK
+      await segmentPromise;
+      // send the next 
+    } catch {
+      // resend the segment on timeout
+      await sendSegment(segment);
+    }
+  });
 }
