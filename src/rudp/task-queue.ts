@@ -27,8 +27,8 @@ interface QueueItem<T> {
   deferredPromise: DeferredPromise<T>
 }
 
-export default class AsyncQueue<Value> {
-  private _queue: (QueueItem<Value> | undefined)[];
+export default class TaskQueue<T> {
+  private _queue: (QueueItem<T> | undefined)[];
   private _queueIsRunning: boolean;
   private _queueFinished: DeferredPromise<void>;
 
@@ -38,7 +38,7 @@ export default class AsyncQueue<Value> {
     this._queueFinished = new DeferredPromise<void>();
   }
 
-  private async _executeQueue() {
+  private async _execute() {
     const top = this._queue[0];
     if (!top) {
       this._queueIsRunning = false;
@@ -52,28 +52,27 @@ export default class AsyncQueue<Value> {
       deferredPromise.resolve(value);
     } catch (e) {
       deferredPromise.reject(e);
-      this._queueFinished.reject(e);
     }
-    this._executeQueue();
+    this._execute();
   }
 
-  async executeQueue() {
+  async execute() {
     if (!this._queueIsRunning) {
       this._queueFinished = new DeferredPromise<void>();
       this._queueIsRunning = true;
-      this._executeQueue();
+      this._execute();
     }
     return this._queueFinished;
   }
 
-  addTask(task: () => Promise<Value>) {
-    const deferredPromise = new DeferredPromise<Value>();
+  add(task: () => Promise<T>) {
+    const deferredPromise = new DeferredPromise<T>();
     this._queue.push({
       task,
       deferredPromise
     });
     
-    return deferredPromise as Promise<Value>;
+    return deferredPromise as Promise<T>;
   }
 }
 
@@ -84,13 +83,13 @@ function waitAndThenSay(message: string) {
 }
 
 // async function main() {
-//   const asyncQueue = new AsyncQueue<string>();
+//   const asyncQueue = new TaskQueue<string>();
 //   console.log('queue start');
-//   asyncQueue.addTask(() => waitAndThenSay('hello0')).then(console.log.bind(console));
-//   asyncQueue.addTask(() => waitAndThenSay('hello1')).then(console.log.bind(console));
-//   asyncQueue.addTask(() => waitAndThenSay('hello2')).then(console.log.bind(console));
-//   asyncQueue.addTask(() => waitAndThenSay('hello3')).then(console.log.bind(console));
-//   await asyncQueue.executeQueue();
+//   asyncQueue.add(() => waitAndThenSay('hello0')).then(console.log.bind(console));
+//   asyncQueue.add(() => waitAndThenSay('hello1')).then(console.log.bind(console));
+//   asyncQueue.add(() => waitAndThenSay('hello2')).then(console.log.bind(console));
+//   asyncQueue.add(() => waitAndThenSay('hello3')).then(console.log.bind(console));
+//   await asyncQueue.execute();
 //   console.log('queue finished');
 // }
 
