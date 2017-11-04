@@ -1,4 +1,4 @@
-class DeferredPromise<T> implements Promise<T> {
+export class DeferredPromise<T> implements Promise<T> {
   private _promise: Promise<T>
   resolve: (t?: T) => void;
   reject: (error?: any) => void;
@@ -76,18 +76,21 @@ export default class TaskQueue<T> {
   }
 }
 
-function waitAndThenSay(message: string) {
-  return new Promise<string>((resolve, reject) => {
-    setTimeout(() => resolve(message), 2000);
-  });
-}
+// function waitAndThenSay(message: string) {
+//   return new Promise<string>((resolve, reject) => {
+//     setTimeout(() => resolve(message), 2000);
+//   });
+// }
 
 // async function main() {
 //   const asyncQueue = new TaskQueue<string>();
 //   console.log('queue start');
 //   asyncQueue.add(() => waitAndThenSay('hello0')).then(console.log.bind(console));
+//   asyncQueue.execute();
 //   asyncQueue.add(() => waitAndThenSay('hello1')).then(console.log.bind(console));
+//   asyncQueue.execute();
 //   asyncQueue.add(() => waitAndThenSay('hello2')).then(console.log.bind(console));
+//   asyncQueue.execute();
 //   asyncQueue.add(() => waitAndThenSay('hello3')).then(console.log.bind(console));
 //   await asyncQueue.execute();
 //   console.log('queue finished');
