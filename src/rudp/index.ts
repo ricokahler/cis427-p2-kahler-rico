@@ -45,6 +45,12 @@ export interface WindowOptions {
   segmentTimeout: number,
 }
 
+export interface MessageStreamOptions {
+  sendSegment: (segment: Segment) => Promise<void>,
+  segmentStream: Observable<Segment>,
+  segmentSizeInBytes: number,
+}
+
 export interface Segment {
   messageId: string,
   seqAck: number,
@@ -87,6 +93,22 @@ export function stringToSegment(stringSegment: string) {
     newSegment.data = data;
   }
   return newSegment;
+}
+
+function wait(milliseconds: number) {
+  return new Promise(resolve => setTimeout(() => resolve(), milliseconds));
+}
+
+function resolveName(hostname: string) {
+  return new Promise<string[]>((resolve, reject) => {
+    Dns.resolve4(hostname, (error, addresses) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(addresses);
+      }
+    });
+  })
 }
 
 export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerOptions>) {
@@ -135,12 +157,10 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
         message.toString() === '__HANDSHAKE__ACK'
       );
 
-
-
       // when the `__HANDSHAKE__ACK` message comes, we can push a new connection.
       ackStream.subscribe(async ({ message, info }) => {
 
-        function sendRawString(m: string) {
+        function sendRawSegment(m: string) {
           return new Promise((resolve, reject) => {
             server.send(m, info.port, info.address, (error, bytes) => {
               if (error) {
@@ -155,10 +175,11 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
         // connection established
         console.log('got ACK, connection established');
 
-        connectionObserver.next(new ClientConnection({
+        connectionObserver.next(createClientConnection({
           sendSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
             const segmentAsString = segmentToString(segment);
-            await sendRawString(segmentAsString);
+            // await wait(5000);
+            await sendRawSegment(segmentAsString);
           }),
           segmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
           segmentSizeInBytes: maxSegmentSizeInBytes,
@@ -169,28 +190,13 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
     });
   });
 
-
   const reliableUdpServer: ReliableUdpServer = {
     connectionStream,
     close: () => server.close(),
   };
 
   server.bind(port); // start server
-
   return reliableUdpServer;
-}
-
-
-function resolveName(hostname: string) {
-  return new Promise<string[]>((resolve, reject) => {
-    Dns.resolve4(hostname, (error, addresses) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(addresses);
-      }
-    });
-  })
 }
 
 export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableUdpClientOptions>) {
@@ -201,7 +207,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
   const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
   const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT
-  
+
   if (!address) {
     throw new Error(`Could not resolve hostname: "${rudpOptions.hostname}"`)
   }
@@ -254,7 +260,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   }
 
   const reliableUdpSocket: ReliableUdpSocket = {
-    messageStream: createMessageStream(segmentStream, sendSegment, segmentSizeInBytes),
+    messageStream: createMessageStream({ segmentStream, sendSegment, segmentSizeInBytes }),
     sendMessage: (message: string | Buffer) => sendMessageWithWindow(message, {
       segmentSizeInBytes,
       segmentStream,
@@ -262,40 +268,33 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
       segmentTimeout,
       windowSize,
     }),
-    info: client.address()
+    info: { address, family: 'IPv4', port }
   }
 
   return reliableUdpSocket;
 }
 
-class ClientConnection implements ReliableUdpSocket {
-  info: Udp.AddressInfo;
-  windowOptions: WindowOptions;
+export function createClientConnection(options: WindowOptions, info: Udp.AddressInfo) {
 
-  messageQueue: TaskQueue<void>;
-  messageStream: Observable<Buffer>;
+  const messageQueue = new TaskQueue<void>();
 
-  constructor(options: WindowOptions, info: Udp.AddressInfo) {
-    this.info = info;
-    this.windowOptions = options;
-    this.messageQueue = new TaskQueue<void>();
-    this.messageStream = new Subject<Buffer>();
-  }
-
-  sendMessage(message: string | Buffer) {
-    const promise = this.messageQueue.add(() =>
-      sendMessageWithWindow(message, this.windowOptions)
-    );
-    this.messageQueue.execute();
+  function sendMessage(message: string | Buffer) {
+    const promise = messageQueue.add(() => sendMessageWithWindow(message, options));
+    messageQueue.execute();
     return promise;
   }
+
+  const socket: ReliableUdpSocket = {
+    info,
+    messageStream: createMessageStream(options),
+    sendMessage,
+  };
+
+  return socket;
 }
 
-export function createMessageStream(
-  segmentStream: Observable<Segment>,
-  sendSegment: (segment: Segment) => Promise<void>,
-  segmentSizeInBytes: number,
-) {
+export function createMessageStream(options: MessageStreamOptions) {
+  const { segmentSizeInBytes, segmentStream, sendSegment } = options;
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
     (segmentStream
       .filter(value => value.messageId !== undefined)
