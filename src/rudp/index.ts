@@ -233,7 +233,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   }
 
   const reliableUdpSocket: ReliableUdpSocket = {
-    messageStream: convertToMessageStream(segmentStream, sendSegment, segmentSizeInBytes),
+    messageStream: createMessageStream(segmentStream, sendSegment, segmentSizeInBytes),
     sendMessage: async (message: string | Buffer) => { },
     info: client.address()
   }
@@ -285,7 +285,7 @@ class ClientConnection implements ReliableUdpSocket {
   }
 }
 
-function convertToMessageStream(
+function createMessageStream(
   segmentStream: Observable<Segment>,
   sendSegment: (segment: Segment) => Promise<void>,
   segmentSizeInBytes: number,
@@ -355,6 +355,7 @@ function findNextSeq(
   }
   const lastBuffer = buffers[buffers.length - 1];
   if (!lastBuffer) {
+    // should never happen
     throw new Error('last buffer was undefined');
   }
   return lastBuffer.seqAck + segmentSizeInBytes;
