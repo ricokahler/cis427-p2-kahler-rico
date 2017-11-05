@@ -2,9 +2,9 @@ import * as Udp from 'dgram';
 import * as Dns from 'dns';
 import { Observable, Observer, Subject } from 'rxjs';
 import * as uuid from 'uuid/v4';
-import {range} from 'lodash';
+import { range } from 'lodash';
 const server = Udp.createSocket('udp4');
-import TaskQueue, {DeferredPromise} from './task-queue';
+import TaskQueue, { DeferredPromise } from './task-queue';
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
@@ -187,6 +187,7 @@ interface Segment {
   messageId: string,
   seqAck: number,
   data: Buffer,
+  done: boolean,
 }
 
 interface MessageChannelOptions {
@@ -209,6 +210,34 @@ class ClientConnection implements ReliableUdpSocket {
     this.info = messageChannelOptions.clientInfo;
     this.messageChannelOptions = messageChannelOptions;
     this.messageQueue = new TaskQueue<void>();
+    const sendSegment = messageChannelOptions.sendSegment;
+    const segmentSizeInBytes = messageChannelOptions.segmentSizeInBytes;
+    // const sendSegment = messageChannelOptions.
+
+
+    messageChannelOptions.segmentStream.groupBy(value => value.messageId).subscribe(stream => {
+
+      const buffers = [] as ({ data: Buffer, seqAck: number } | undefined)[];
+      // 100 200     400 500
+
+      stream.subscribe(async segment => {
+        buffers[segment.seqAck / segmentSizeInBytes] = {
+          data: segment.data,
+          seqAck: segment.seqAck
+        };
+
+        const nextExpected = findNextSeq(buffers, segmentSizeInBytes);
+
+        // ack
+        await sendSegment({
+          messageId: segment.messageId,
+          seqAck: nextExpected,
+          data: new Buffer(''),
+          done: false,
+        });
+      })
+    });
+
   }
 
   sendMessage(message: string | Buffer) {
@@ -224,6 +253,24 @@ class ClientConnection implements ReliableUdpSocket {
   }
 }
 
+function findNextSeq(
+  buffers: ({ data: Buffer, seqAck: number } | undefined)[],
+  segmentSizeInBytes: number
+) {
+  let i = 0;
+  for (let buffer of buffers) {
+    if (!buffer) {
+      return i * segmentSizeInBytes;
+    }
+    i += 1;
+  }
+  const lastBuffer = buffers[buffers.length - 1];
+  if (!lastBuffer) {
+    throw new Error('last buffer was undefined');
+  }
+  return lastBuffer.seqAck;
+}
+
 function sendMessageWithWindow(message: string | Buffer, options: MessageChannelOptions) {
   const {
     sendSegment: _sendSegment,
@@ -234,7 +281,7 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
     segmentTimeout,
   } = options;
   const id = uuid();
-  
+
   const segmentStream = _segmentStream.filter(segment => segment.messageId === id);
 
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
@@ -246,12 +293,19 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       seqAck,
       data: buffer.slice(seqAck, seqAck + segmentSizeInBytes),
     }))
-    .map(({seqAck, data}) => ({
+    .map(({ seqAck, data }) => ({
       data,
       seqAck,
       messageId: id,
+      done: false,
     }) as Segment)
   );
+  segments.push({
+    messageId: id,
+    data: new Buffer(''),
+    seqAck: -1,
+    done: true
+  });
 
   function sendSegment(segment: Segment) {
     return new Promise<number>(async (resolve, reject) => {
