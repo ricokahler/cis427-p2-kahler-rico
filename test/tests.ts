@@ -178,6 +178,7 @@ describe('sendMessageWithWindow', function () {
 
     const sendSegment = async (segment: Segment) => {
       messageId = segment.messageId;
+      segmentsSent.push(segment);
       segmentStream.next({ messageId, seqAck: segment.seqAck + segmentSize });
       return Promise.resolve();
     }
@@ -189,5 +190,11 @@ describe('sendMessageWithWindow', function () {
       windowSize,
       segmentTimeout,
     });
+
+    const finalBuffer = Buffer.concat(
+      segmentsSent.map(segment => segment.data).filter(x => x) as Buffer[]
+    );
+
+    expect(finalBuffer.toString()).to.be.equal(message);
   });
 });
