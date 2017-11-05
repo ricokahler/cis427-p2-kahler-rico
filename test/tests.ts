@@ -2,8 +2,12 @@ import 'mocha';
 import { expect } from 'chai';
 
 import * as uuid from 'uuid/v4';
+import { range } from 'lodash';
+import { Observable, Observer, ReplaySubject } from 'rxjs';
 
-import { Segment, findNextSequenceNumber, segmentToString, stringToSegment } from '../src/rudp';
+import {
+  Segment, findNextSequenceNumber, segmentToString, stringToSegment, createMessageStream
+} from '../src/rudp';
 
 describe('findNextSequenceNumber', function () {
   it('finds the next sequence number from the middle', function () {
@@ -71,3 +75,91 @@ describe('stringToSegment, segmentToString', function () {
   })
 });
 
+describe('createMessageStream', function () {
+  it('receives segments, sends acknowledgements, and pushes complete buffers', async function () {
+    const messageId = uuid();
+
+    const message = 'The quick brown fox jumps over the lazy dog.';
+    const segmentSize = 4;
+    const bufferFromMessage = new Buffer(message);
+    const buffers = (range(Math.ceil(bufferFromMessage.byteLength / segmentSize))
+      .map(i => segmentSize * i)
+      .map(sequenceNumber => ({
+        sequenceNumber,
+        buffer: bufferFromMessage.slice(sequenceNumber, sequenceNumber + segmentSize)
+      }))
+    );
+
+    const segmentStream = Observable.create((observer: Observer<Segment>) => {
+      for (let { sequenceNumber, buffer } of buffers) {
+        observer.next({ messageId, seqAck: sequenceNumber, data: buffer });
+      }
+      observer.next({ messageId, seqAck: buffers.length * segmentSize, last: true });
+      // observer.complete();
+    }) as Observable<Segment>;
+
+    const acks = [] as number[];
+
+    const sendSegment = (segment: Segment) => {
+      acks.push(segment.seqAck);
+      return Promise.resolve();
+    }
+
+    const messageStream = await createMessageStream(segmentStream, sendSegment, segmentSize);
+    const finalBuffer = await messageStream.take(1).toPromise();
+    expect(finalBuffer.toString()).to.be.equal(message);
+    expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
+  });
+
+  it('sends cumulative acks when a segment is missing', async function () {
+    const messageId = uuid();
+
+    const message = 'The quick brown fox jumps over the lazy dog.';
+    const segmentSize = 4;
+    const bufferFromMessage = new Buffer(message);
+    const totalBuffers = Math.ceil(bufferFromMessage.byteLength / segmentSize);
+    const indexToSkip = Math.floor(totalBuffers / 2);
+    const buffers = (range(totalBuffers)
+      .filter(i => i !== indexToSkip)
+      .map(i => segmentSize * i)
+      .map(sequenceNumber => ({
+        sequenceNumber,
+        buffer: bufferFromMessage.slice(sequenceNumber, sequenceNumber + segmentSize)
+      }))
+    );
+
+
+    const segmentStream = new ReplaySubject<Segment>();
+    for (let { sequenceNumber, buffer } of buffers) {
+      segmentStream.next({ messageId, seqAck: sequenceNumber, data: buffer });
+    }
+    segmentStream.next({ messageId, seqAck: buffers.length * segmentSize, last: true });
+
+    const acks = [] as number[];
+    const cumulativeAcks = [] as number[];
+
+    const sendSegment = (segment: Segment) => {
+      console.log('ack', segment.seqAck);
+      acks.push(segment.seqAck);
+      cumulativeAcks[segment.seqAck] = (/*if*/ cumulativeAcks[segment.seqAck] === undefined
+        ? 1
+        : cumulativeAcks[segment.seqAck] + 1
+      );
+      if (cumulativeAcks[segment.seqAck] >= 3) {
+        // send the missing one
+        segmentStream.next({
+          messageId,
+          seqAck: indexToSkip * segmentSize,
+          data: bufferFromMessage.slice(indexToSkip * segmentSize, (indexToSkip + 1) * segmentSize),
+        });
+      }
+      return Promise.resolve();
+    }
+
+
+    const messageStream = await createMessageStream(segmentStream, sendSegment, segmentSize);
+    const finalBuffer = await messageStream.take(1).toPromise();
+    expect(finalBuffer.toString()).to.be.equal(message);
+    // expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
+  });
+});

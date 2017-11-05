@@ -315,10 +315,13 @@ export function createMessageStream(
           if (segment.last) {
             receivedLast = true;
           }
-
           const lastBuffer = buffers[buffers.length - 1];
 
-          if (receivedLast && lastBuffer && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes) {
+          if (
+            receivedLast
+            && lastBuffer
+            && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes
+          ) {
             const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
               if (!buffer) {
                 throw new Error('should never happen');
@@ -332,8 +335,6 @@ export function createMessageStream(
           await sendSegment({
             messageId: segment.messageId,
             seqAck: nextExpectedSequenceNumber,
-            data: new Buffer(''),
-            last: false,
           });
         })
       })
