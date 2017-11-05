@@ -153,11 +153,10 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
             }
           }),
           segmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
-          clientInfo: info,
           segmentSizeInBytes: maxSegmentSizeInBytes,
           windowSize,
           segmentTimeout,
-        }));
+        }, info));
       });
     });
   });
@@ -259,10 +258,9 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
 }
 
 
-interface MessageChannelOptions {
+interface WindowOptions {
   sendSegment: (segment: Segment) => Promise<void>,
   segmentStream: Observable<Segment>,
-  clientInfo: Udp.AddressInfo,
   segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
@@ -270,21 +268,16 @@ interface MessageChannelOptions {
 
 class ClientConnection implements ReliableUdpSocket {
   info: Udp.AddressInfo;
-  messageChannelOptions: MessageChannelOptions;
+  messageChannelOptions: WindowOptions;
 
   messageQueue: TaskQueue<void>;
   messageStream: Observable<Buffer>;
 
-  constructor(messageChannelOptions: MessageChannelOptions) {
-    this.info = messageChannelOptions.clientInfo;
-    this.messageChannelOptions = messageChannelOptions;
+  constructor(options: WindowOptions, info: Udp.AddressInfo) {
+    this.info = info;
+    this.messageChannelOptions = options;
     this.messageQueue = new TaskQueue<void>();
     this.messageStream = new Subject<Buffer>();
-    // this.messageStream = convertToMessageStream(
-    //   messageChannelOptions.segmentStream,
-    //   messageChannelOptions.sendSegment,
-    //   messageChannelOptions.segmentSizeInBytes
-    // );
   }
 
   sendMessage(message: string | Buffer) {
@@ -365,22 +358,17 @@ export function findNextSequenceNumber(
   return lastBuffer.seqAck + segmentSizeInBytes;
 }
 
-function sendMessageWithWindow(message: string | Buffer, options: MessageChannelOptions) {
+export function sendMessageWithWindow(message: string | Buffer, options: WindowOptions) {
   const {
     sendSegment: _sendSegment,
     segmentStream: _segmentStream,
     windowSize,
-    clientInfo,
     segmentSizeInBytes,
     segmentTimeout,
   } = options;
   const id = uuid();
 
   const segmentStream = _segmentStream.filter(segment => segment.messageId === id);
-
-  segmentStream.subscribe(seg => {
-    console.log({ seg })
-  })
 
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
   const totalSegments = Math.ceil(buffer.byteLength / segmentSizeInBytes);
@@ -400,12 +388,11 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
   );
   segments.push({
     messageId: id,
-    data: new Buffer(''),
     seqAck: totalSegments * segmentSizeInBytes,
     last: true
   });
 
-  function sendSegment(segment: Segment) {
+  function sendSegmentAndGetAck(segment: Segment) {
     return new Promise<number>(async (resolve, reject) => {
       let gotAck = false;
 
@@ -423,7 +410,6 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       // reject on timeout
       setTimeout(() => {
         if (!gotAck) {
-          console.log('===timeout occurred===')
           reject(new Error('timeout occurred'));
         }
       }, segmentTimeout);
@@ -440,7 +426,6 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
   async function send(segment: Segment | undefined) {
     if (!segment) {
       if (greatestAck > buffer.byteLength) {
-        console.log('finished sending!')
         finished.resolve();
       }
       return;
@@ -449,7 +434,7 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       if (segment.seqAck > lastSegmentSent) {
         lastSegmentSent = segment.seqAck;
       }
-      const ack = await sendSegment(segment);
+      const ack = await sendSegmentAndGetAck(segment);
       if (ack > greatestAck) {
         greatestAck = ack;
       }
@@ -457,7 +442,6 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       send(nextSegment);
     } catch {
       // re-send segment that timed out
-      console.log(`failed to send segment: ${segment.seqAck}, retrying...`)
       send(segment);
     }
   }

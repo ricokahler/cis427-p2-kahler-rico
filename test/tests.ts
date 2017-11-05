@@ -6,7 +6,8 @@ import { range } from 'lodash';
 import { Observable, Observer, ReplaySubject } from 'rxjs';
 
 import {
-  Segment, findNextSequenceNumber, segmentToString, stringToSegment, createMessageStream
+  Segment, findNextSequenceNumber, segmentToString, stringToSegment, createMessageStream,
+  sendMessageWithWindow
 } from '../src/rudp';
 
 describe('findNextSequenceNumber', function () {
@@ -161,5 +162,32 @@ describe('createMessageStream', function () {
     const finalBuffer = await messageStream.take(1).toPromise();
     expect(finalBuffer.toString()).to.be.equal(message);
     // expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
+  });
+});
+
+describe('sendMessageWithWindow', function () {
+  it('sends a message using a sliding window', async function () {
+    const message = 'The quick brown fox jumps over the lazy dog.';
+    const segmentSize = 4;
+    const windowSize = 3;
+    const segmentTimeout = 2000;
+    let messageId: string;
+
+    const segmentsSent = [] as Segment[];
+    const segmentStream = new ReplaySubject<Segment>();
+
+    const sendSegment = async (segment: Segment) => {
+      messageId = segment.messageId;
+      segmentStream.next({ messageId, seqAck: segment.seqAck + segmentSize });
+      return Promise.resolve();
+    }
+
+    await sendMessageWithWindow(message, {
+      sendSegment,
+      segmentStream,
+      segmentSizeInBytes: segmentSize,
+      windowSize,
+      segmentTimeout,
+    });
   });
 });
