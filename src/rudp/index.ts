@@ -23,6 +23,7 @@ export interface ReliableUdpServerOptions {
   maxSegmentSizeInBytes: number,
   windowSize: number,
   socketType: Udp.SocketType,
+  segmentTimeout: number,
 }
 
 interface BufferWithInfo {
@@ -40,11 +41,24 @@ function createSocketId(info: Udp.AddressInfo) {
   return info.address + '__' + info.family + '__' + info.port;
 }
 
+function segmentToString(segment: Segment) {
+  const { data, ...restOfSegment } = segment;
+  const dataBase64 = data.toString('base64');
+  return JSON.stringify({ ...restOfSegment, dataBase64 });
+}
+
+function dataFromSegment(stringSegment: string) {
+  const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment);
+  const data = new Buffer(dataBase64, 'base64');
+  return { ...restOfParsed, data } as Segment;
+}
+
 export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOptions>) {
   const port = rudpOptions.port || 8090;
   const server = Udp.createSocket(rudpOptions.socketType || 'udp4');
   const maxSegmentSizeInBytes = rudpOptions.maxSegmentSizeInBytes || 1000;
   const windowSize = rudpOptions.windowSize || 5;
+  const segmentTimeout = rudpOptions.segmentTimeout || 2000;
 
   function sendSegmentTo(info: Udp.AddressInfo, message: string) {
     return new Promise<number>((resolve, reject) => {
@@ -87,20 +101,25 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
       ackStream.subscribe(async ({ message, info }) => {
         // connection established
         console.log('got ACK, connection established');
-        // connectionObserver.next(new ClientConnection({
-        //   sendSegment: (segment: string | Buffer) => new Promise<number>((resolve, reject) => {
-        //     server.send(segment, info.port, info.address, (error, bytes) => {
-        //       if (error) {
-        //         reject(error);
-        //       } else {
-        //         resolve(bytes);
-        //       }
-        //     });
-        //   }),
-        //   info,
-        //   maxSegmentSizeInBytes,
-        //   windowSize,
-        // }));
+        connectionObserver.next(new ClientConnection({
+          sendSegment: (segment: Segment) => new Promise<void>((resolve, reject) => {
+            const base64 = segment.data.toString('base64');
+            const { data, ...restOfSegment } = segment;
+            const stringToSend = JSON.stringify({ ...restOfSegment, base64 });
+            server.send(stringToSend, info.port, info.address, (error, bytes) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            })
+          }),
+          segmentStream: undefined as any,
+          clientInfo: info,
+          segmentSizeInBytes: maxSegmentSizeInBytes,
+          windowSize,
+          segmentTimeout,
+        }));
       });
     });
   });
@@ -176,7 +195,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
 
   const reliableUdpSocket: ReliableUdpSocket = {
     messageStream,
-    sendMessage: async (message: Buffer) => { await sendSegmentToServer(message); },
+    sendMessage: async (message: string | Buffer) => { await sendSegmentToServer(message); },
     info: client.address()
   }
 
@@ -205,57 +224,17 @@ class ClientConnection implements ReliableUdpSocket {
   messageChannelOptions: MessageChannelOptions;
 
   messageQueue: TaskQueue<void>;
-  messageStream: Subject<Buffer>;
+  messageStream: Observable<Buffer>;
 
   constructor(messageChannelOptions: MessageChannelOptions) {
     this.info = messageChannelOptions.clientInfo;
     this.messageChannelOptions = messageChannelOptions;
     this.messageQueue = new TaskQueue<void>();
-    const sendSegment = messageChannelOptions.sendSegment;
-    const segmentSizeInBytes = messageChannelOptions.segmentSizeInBytes;
-    // const sendSegment = messageChannelOptions.
-    this.messageStream = new Subject<Buffer>();
-
-    messageChannelOptions.segmentStream.groupBy(value => value.messageId).subscribe(stream => {
-
-      const buffers = [] as ({ data: Buffer, seqAck: number } | undefined)[];
-      // 100 200     400 500
-      let receivedDone = false;
-
-      stream.subscribe(async segment => {
-        buffers[segment.seqAck / segmentSizeInBytes] = {
-          data: segment.data,
-          seqAck: segment.seqAck
-        };
-
-        const nextExpected = findNextSeq(buffers, segmentSizeInBytes);
-
-        if (segment.done) {
-          console.log('got done');
-          receivedDone = true;
-        }
-
-        const lastBuffer = buffers[buffers.length - 1];
-
-        if (receivedDone && lastBuffer && nextExpected === lastBuffer.seqAck + segmentSizeInBytes) {
-          const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
-            if (!buffer) {
-              throw new Error('should never happen');
-            }
-            return buffer.data;
-          }));
-          this.messageStream.next(combinedBuffer);
-        }
-
-        // ack
-        await sendSegment({
-          messageId: segment.messageId,
-          seqAck: nextExpected,
-          data: new Buffer(''),
-          done: false,
-        });
-      })
-    });
+    this.messageStream = convertToMessageStream(
+      messageChannelOptions.segmentStream,
+      messageChannelOptions.sendSegment,
+      messageChannelOptions.segmentSizeInBytes
+    );
   }
 
   sendMessage(message: string | Buffer) {
@@ -265,6 +244,55 @@ class ClientConnection implements ReliableUdpSocket {
     this.messageQueue.execute();
     return promise;
   }
+}
+
+function convertToMessageStream(
+  segmentStream: Observable<Segment>,
+  sendSegment: (segment: Segment) => Promise<void>,
+  segmentSizeInBytes: number,
+) {
+  const messageStream = new Subject<Buffer>();
+  segmentStream.groupBy(value => value.messageId).subscribe(stream => {
+
+    const buffers = [] as ({ data: Buffer, seqAck: number } | undefined)[];
+    // 100 200     400 500
+    let receivedDone = false;
+
+    stream.subscribe(async segment => {
+      buffers[segment.seqAck / segmentSizeInBytes] = {
+        data: segment.data,
+        seqAck: segment.seqAck
+      };
+
+      const nextExpected = findNextSeq(buffers, segmentSizeInBytes);
+
+      if (segment.done) {
+        console.log('got done');
+        receivedDone = true;
+      }
+
+      const lastBuffer = buffers[buffers.length - 1];
+
+      if (receivedDone && lastBuffer && nextExpected === lastBuffer.seqAck + segmentSizeInBytes) {
+        const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
+          if (!buffer) {
+            throw new Error('should never happen');
+          }
+          return buffer.data;
+        }));
+        messageStream.next(combinedBuffer);
+      }
+
+      // ack
+      await sendSegment({
+        messageId: segment.messageId,
+        seqAck: nextExpected,
+        data: new Buffer(''),
+        done: false,
+      });
+    })
+  });
+  return messageStream as Observable<Buffer>;
 }
 
 function findNextSeq(
