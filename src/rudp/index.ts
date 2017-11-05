@@ -5,12 +5,19 @@ import * as uuid from 'uuid/v4';
 import { range } from 'lodash';
 const server = Udp.createSocket('udp4');
 import TaskQueue, { DeferredPromise } from './task-queue';
-const defaultSegmentSize = 1000;
+const defaultSegmentSize = 4;
+let a = 0;
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
   messageStream: Observable<Buffer>,
   sendMessage: (message: string | Buffer) => Promise<void>,
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve, reject) => {
+    setTimeout(() => { resolve() }, milliseconds);
+  })
 }
 
 export interface ReliableUdpServer {
@@ -57,7 +64,7 @@ function dataFromSegment(stringSegment: string) {
 export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOptions>) {
   const port = rudpOptions.port || 8090;
   const server = Udp.createSocket(rudpOptions.socketType || 'udp4');
-  const maxSegmentSizeInBytes = rudpOptions.maxSegmentSizeInBytes || 1000;
+  const maxSegmentSizeInBytes = rudpOptions.maxSegmentSizeInBytes || defaultSegmentSize;
   const windowSize = rudpOptions.windowSize || 5;
   const segmentTimeout = rudpOptions.segmentTimeout || 2000;
 
@@ -98,20 +105,35 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
       const ackStream = segmentStreamOfOneClient.filter(({ message }) =>
         message.toString() === '__HANDSHAKE__ACK'
       );
+
+
+
       // when the `__HANDSHAKE__ACK` message comes, we can push a new connection.
       ackStream.subscribe(async ({ message, info }) => {
-        // connection established
-        console.log('got ACK, connection established');
-        connectionObserver.next(new ClientConnection({
-          sendSegment: (segment: Segment) => new Promise<void>((resolve, reject) => {
-            const segmentAsString = segmentToString(segment);
-            server.send(segmentAsString, info.port, info.address, (error, bytes) => {
+
+        function sendRawString(m: string) {
+          return new Promise((resolve, reject) => {
+            server.send(m, info.port, info.address, (error, bytes) => {
               if (error) {
                 reject(error);
               } else {
                 resolve();
               }
             })
+          });
+        }
+
+        // connection established
+        console.log('got ACK, connection established');
+        
+        connectionObserver.next(new ClientConnection({
+          sendSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
+            const segmentAsString = segmentToString(segment);
+            // await wait(3000);
+            a += 1;
+            if (a !== 2) {
+              await sendRawString(segmentAsString);
+            }
           }),
           segmentStream: segmentStreamOfOneClient.map(s => dataFromSegment(s.message.toString())),
           clientInfo: info,
@@ -179,6 +201,8 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
     });
   }) as Observable<BufferWithInfo>;
 
+  rawSegmentStream.subscribe(raw => console.log({raw: raw.message.toString()}))
+
   // initiate the handshake
   console.log('sending SYNC...')
   await sendSegmentToServer('__HANDSHAKE__SYN');
@@ -208,11 +232,9 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
     });
   }
 
-  
-
   const reliableUdpSocket: ReliableUdpSocket = {
     messageStream: convertToMessageStream(segmentStream, sendSegment, segmentSizeInBytes),
-    sendMessage: async (message: string | Buffer) => {  },
+    sendMessage: async (message: string | Buffer) => { },
     info: client.address()
   }
 
@@ -235,7 +257,6 @@ interface MessageChannelOptions {
   segmentTimeout: number,
 }
 
-
 class ClientConnection implements ReliableUdpSocket {
   info: Udp.AddressInfo;
   messageChannelOptions: MessageChannelOptions;
@@ -247,11 +268,12 @@ class ClientConnection implements ReliableUdpSocket {
     this.info = messageChannelOptions.clientInfo;
     this.messageChannelOptions = messageChannelOptions;
     this.messageQueue = new TaskQueue<void>();
-    this.messageStream = convertToMessageStream(
-      messageChannelOptions.segmentStream,
-      messageChannelOptions.sendSegment,
-      messageChannelOptions.segmentSizeInBytes
-    );
+    this.messageStream = new Subject<Buffer>();
+    // this.messageStream = convertToMessageStream(
+    //   messageChannelOptions.segmentStream,
+    //   messageChannelOptions.sendSegment,
+    //   messageChannelOptions.segmentSizeInBytes
+    // );
   }
 
   sendMessage(message: string | Buffer) {
@@ -271,25 +293,30 @@ function convertToMessageStream(
   const messageStream = new Subject<Buffer>();
   segmentStream.groupBy(value => value.messageId).subscribe(stream => {
 
+
     const buffers = [] as ({ data: Buffer, seqAck: number } | undefined)[];
     // 100 200     400 500
     let receivedDone = false;
 
     stream.subscribe(async segment => {
+      console.log({ segment });
+
       buffers[segment.seqAck / segmentSizeInBytes] = {
         data: segment.data,
         seqAck: segment.seqAck
       };
 
       const nextExpected = findNextSeq(buffers, segmentSizeInBytes);
-
+      console.log('buffers', buffers);
+      
       if (segment.done) {
         console.log('got done');
         receivedDone = true;
       }
-
+      
       const lastBuffer = buffers[buffers.length - 1];
-
+      console.log({ nextExpected, lastBufferAck: lastBuffer && lastBuffer.seqAck + segmentSizeInBytes })
+      
       if (receivedDone && lastBuffer && nextExpected === lastBuffer.seqAck + segmentSizeInBytes) {
         const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
           if (!buffer) {
@@ -330,7 +357,7 @@ function findNextSeq(
   if (!lastBuffer) {
     throw new Error('last buffer was undefined');
   }
-  return lastBuffer.seqAck;
+  return lastBuffer.seqAck + segmentSizeInBytes;
 }
 
 function sendMessageWithWindow(message: string | Buffer, options: MessageChannelOptions) {
@@ -345,6 +372,10 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
   const id = uuid();
 
   const segmentStream = _segmentStream.filter(segment => segment.messageId === id);
+
+  segmentStream.subscribe(seg => {
+    console.log({seg})
+  })
 
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
   const totalSegments = Math.ceil(buffer.byteLength / segmentSizeInBytes);
@@ -387,6 +418,7 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       // reject on timeout
       setTimeout(() => {
         if (!gotAck) {
+          console.log('===timeout occurred===')
           reject(new Error('timeout occurred'));
         }
       }, segmentTimeout);
@@ -403,6 +435,7 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
   async function send(segment: Segment | undefined) {
     if (!segment) {
       if (greatestAck > buffer.byteLength) {
+        console.log('finished sending!')
         finished.resolve();
       }
       return;
@@ -419,6 +452,7 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       send(nextSegment);
     } catch {
       // re-send segment that timed out
+      console.log(`failed to send segment: ${segment.seqAck}, retrying...`)
       send(segment);
     }
   }
