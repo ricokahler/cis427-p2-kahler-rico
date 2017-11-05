@@ -111,7 +111,7 @@ describe('createMessageStream', function () {
     expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
   });
 
-  it('sends cumulative acks when a segment is missing', async function () {
+  it('push message when a segment is out of order', async function () {
     const messageId = uuid();
 
     const message = 'The quick brown fox jumps over the lazy dog.';
@@ -128,18 +128,18 @@ describe('createMessageStream', function () {
       }))
     );
 
-
     const segmentStream = new ReplaySubject<Segment>();
+    // segmentStream.subscribe(seq => console.log('sending seq: ', seq.seqAck));
     for (let { sequenceNumber, buffer } of buffers) {
       segmentStream.next({ messageId, seqAck: sequenceNumber, data: buffer });
     }
-    segmentStream.next({ messageId, seqAck: buffers.length * segmentSize, last: true });
+    segmentStream.next({ messageId, seqAck: (buffers.length + 1) * segmentSize, last: true });
 
     const acks = [] as number[];
     const cumulativeAcks = [] as number[];
 
     const sendSegment = (segment: Segment) => {
-      console.log('ack', segment.seqAck);
+      // console.log('ack', segment.seqAck);
       acks.push(segment.seqAck);
       cumulativeAcks[segment.seqAck] = (/*if*/ cumulativeAcks[segment.seqAck] === undefined
         ? 1
