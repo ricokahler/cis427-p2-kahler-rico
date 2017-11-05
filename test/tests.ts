@@ -1,7 +1,9 @@
 import 'mocha';
 import { expect } from 'chai';
 
-import { Segment, findNextSequenceNumber } from '../src/rudp';
+import * as uuid from 'uuid/v4';
+
+import { Segment, findNextSequenceNumber, segmentToString, stringToSegment } from '../src/rudp';
 
 describe('findNextSequenceNumber', function () {
   it('finds the next sequence number from the middle', function () {
@@ -44,3 +46,15 @@ describe('findNextSequenceNumber', function () {
   });
 })
 
+describe('stringToSegment, segmentToString', function () {
+  it('converts to and from strings', function () {
+    const segment: Segment = {
+      messageId: uuid(),
+      seqAck: Math.floor(Math.random() * 5) * 100,
+      data: new Buffer(uuid()),
+      done: Math.random() > 0.5
+    };
+
+    expect(stringToSegment(segmentToString(segment))).to.be.deep.equal(segment);
+  });
+});

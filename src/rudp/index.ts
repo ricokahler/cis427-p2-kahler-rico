@@ -49,13 +49,13 @@ function createSocketId(info: Udp.AddressInfo) {
   return info.address + '__' + info.family + '__' + info.port;
 }
 
-function segmentToString(segment: Segment) {
+export function segmentToString(segment: Segment) {
   const { data, ...restOfSegment } = segment;
   const dataBase64 = data.toString('base64');
   return JSON.stringify({ ...restOfSegment, dataBase64 });
 }
 
-function dataFromSegment(stringSegment: string) {
+export function stringToSegment(stringSegment: string) {
   const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment);
   const data = new Buffer(dataBase64, 'base64');
   return { ...restOfParsed, data } as Segment;
@@ -135,7 +135,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
               await sendRawString(segmentAsString);
             }
           }),
-          segmentStream: segmentStreamOfOneClient.map(s => dataFromSegment(s.message.toString())),
+          segmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
           clientInfo: info,
           segmentSizeInBytes: maxSegmentSizeInBytes,
           windowSize,
@@ -216,7 +216,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   const segmentStream = (rawSegmentStream
     .filter(({ info }) => info.address === address && info.port === port)
     .map(({ message }) => message.toString())
-    .map(dataFromSegment)
+    .map(stringToSegment)
   );
 
   function sendSegment(segment: Segment) {
