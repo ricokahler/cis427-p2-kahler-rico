@@ -302,38 +302,42 @@ export function createMessageStream(
   segmentSizeInBytes: number,
 ) {
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
-    segmentStream.groupBy(value => value.messageId).subscribe(segmentsByMessage => {
-      const buffers = [] as (Segment | undefined)[];
-      let receivedDone = false;
-      segmentsByMessage.subscribe(async segment => {
-        buffers[segment.seqAck / segmentSizeInBytes] = segment;
-        const nextExpectedSequenceNumber = findNextSequenceNumber(buffers, segmentSizeInBytes);
+    (segmentStream
+      .filter(value => value.messageId !== undefined)
+      .groupBy(value => value.messageId)
+      .subscribe(segmentsByMessage => {
+        let receivedLast = false;
+        const buffers = [] as (Segment | undefined)[];
+        segmentsByMessage.subscribe(async segment => {
+          buffers[Math.floor(segment.seqAck / segmentSizeInBytes)] = segment;
+          const nextExpectedSequenceNumber = findNextSequenceNumber(buffers, segmentSizeInBytes);
 
-        if (segment.last) {
-          receivedDone = true;
-        }
+          if (segment.last) {
+            receivedLast = true;
+          }
 
-        const lastBuffer = buffers[buffers.length - 1];
+          const lastBuffer = buffers[buffers.length - 1];
 
-        if (receivedDone && lastBuffer && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes) {
-          const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
-            if (!buffer) {
-              throw new Error('should never happen');
-            }
-            return buffer.data || new Buffer('');
-          }));
-          observer.next(combinedBuffer);
-        }
+          if (receivedLast && lastBuffer && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes) {
+            const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
+              if (!buffer) {
+                throw new Error('should never happen');
+              }
+              return buffer.data || new Buffer('');
+            }));
+            observer.next(combinedBuffer);
+          }
 
-        // ack
-        await sendSegment({
-          messageId: segment.messageId,
-          seqAck: nextExpectedSequenceNumber,
-          data: new Buffer(''),
-          last: false,
-        });
+          // ack
+          await sendSegment({
+            messageId: segment.messageId,
+            seqAck: nextExpectedSequenceNumber,
+            data: new Buffer(''),
+            last: false,
+          });
+        })
       })
-    });
+    );
   });
   return messageStream as Observable<Buffer>;
 }
