@@ -5,6 +5,7 @@ import * as uuid from 'uuid/v4';
 import { range } from 'lodash';
 const server = Udp.createSocket('udp4');
 import TaskQueue, { DeferredPromise } from './task-queue';
+const defaultSegmentSize = 1000;
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
@@ -136,6 +137,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
 export interface ReliableUdpClientOptions {
   hostname: string,
   port: number,
+  segmentSizeInBytes: number,
 }
 
 function resolveName(hostname: string) {
@@ -154,6 +156,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   const client = Udp.createSocket('udp4');
   const address = (await resolveName(rudpOptions.hostname || 'localhost'))[0];
   const port = rudpOptions.port || 8090;
+  const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || defaultSegmentSize;
   if (!address) {
     throw new Error(`Could not resolve hostname: "${rudpOptions.hostname}"`)
   }
@@ -170,7 +173,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
     });
   }
 
-  const segmentStream = Observable.create((observer: Observer<BufferWithInfo>) => {
+  const rawSegmentStream = Observable.create((observer: Observer<BufferWithInfo>) => {
     client.addListener('message', (message, serverInfo) => {
       observer.next({ message, info: serverInfo });
     });
@@ -180,20 +183,36 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   console.log('sending SYNC...')
   await sendSegmentToServer('__HANDSHAKE__SYN');
   // wait for the SYN-ACK
-  await segmentStream.filter(({ message }) => message.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
+  await rawSegmentStream.filter(({ message }) => message.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
   console.log('got SYN-ACK. sending ACK...')
   // send the ACK
   await sendSegmentToServer('__HANDSHAKE__ACK');
 
   // connection established here
-  const messageStream = (segmentStream
+  const segmentStream = (rawSegmentStream
     .filter(({ info }) => info.address === address && info.port === port)
-    .map(({ message }) => message)
+    .map(({ message }) => message.toString())
+    .map(dataFromSegment)
   );
 
+  function sendSegment(segment: Segment) {
+    return new Promise<void>((resolve, reject) => {
+      const segmentAsString = segmentToString(segment);
+      client.send(segmentAsString, port, address, (error, bytes) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      })
+    });
+  }
+
+  
+
   const reliableUdpSocket: ReliableUdpSocket = {
-    messageStream,
-    sendMessage: async (message: string | Buffer) => { await sendSegmentToServer(message); },
+    messageStream: convertToMessageStream(segmentStream, sendSegment, segmentSizeInBytes),
+    sendMessage: async (message: string | Buffer) => {  },
     info: client.address()
   }
 
