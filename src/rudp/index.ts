@@ -103,10 +103,8 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
         console.log('got ACK, connection established');
         connectionObserver.next(new ClientConnection({
           sendSegment: (segment: Segment) => new Promise<void>((resolve, reject) => {
-            const base64 = segment.data.toString('base64');
-            const { data, ...restOfSegment } = segment;
-            const stringToSend = JSON.stringify({ ...restOfSegment, base64 });
-            server.send(stringToSend, info.port, info.address, (error, bytes) => {
+            const segmentAsString = segmentToString(segment);
+            server.send(segmentAsString, info.port, info.address, (error, bytes) => {
               if (error) {
                 reject(error);
               } else {
@@ -114,7 +112,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
               }
             })
           }),
-          segmentStream: undefined as any,
+          segmentStream: segmentStreamOfOneClient.map(s => dataFromSegment(s.message.toString())),
           clientInfo: info,
           segmentSizeInBytes: maxSegmentSizeInBytes,
           windowSize,
