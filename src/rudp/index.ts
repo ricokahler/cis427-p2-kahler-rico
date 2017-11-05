@@ -125,7 +125,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
 
         // connection established
         console.log('got ACK, connection established');
-        
+
         connectionObserver.next(new ClientConnection({
           sendSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
             const segmentAsString = segmentToString(segment);
@@ -201,7 +201,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
     });
   }) as Observable<BufferWithInfo>;
 
-  rawSegmentStream.subscribe(raw => console.log({raw: raw.message.toString()}))
+  rawSegmentStream.subscribe(raw => console.log({ raw: raw.message.toString() }))
 
   // initiate the handshake
   console.log('sending SYNC...')
@@ -241,7 +241,7 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   return reliableUdpSocket;
 }
 
-interface Segment {
+export interface Segment {
   messageId: string,
   seqAck: number,
   data: Buffer,
@@ -290,57 +290,46 @@ function createMessageStream(
   sendSegment: (segment: Segment) => Promise<void>,
   segmentSizeInBytes: number,
 ) {
-  const messageStream = new Subject<Buffer>();
-  segmentStream.groupBy(value => value.messageId).subscribe(stream => {
+  const messageStream = Observable.create((observer: Observer<Buffer>) => {
+    segmentStream.groupBy(value => value.messageId).subscribe(segmentsByMessage => {
+      const buffers = [] as (Segment | undefined)[];
+      let receivedDone = false;
+      segmentsByMessage.subscribe(async segment => {
+        buffers[segment.seqAck / segmentSizeInBytes] = segment;
+        const nextExpected = findNextSequenceNumber(buffers, segmentSizeInBytes);
 
+        if (segment.done) {
+          receivedDone = true;
+        }
 
-    const buffers = [] as ({ data: Buffer, seqAck: number } | undefined)[];
-    // 100 200     400 500
-    let receivedDone = false;
+        const lastBuffer = buffers[buffers.length - 1];
+        console.log({ nextExpected, lastBufferAck: lastBuffer && lastBuffer.seqAck + segmentSizeInBytes })
 
-    stream.subscribe(async segment => {
-      console.log({ segment });
+        if (receivedDone && lastBuffer && nextExpected === lastBuffer.seqAck + segmentSizeInBytes) {
+          const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
+            if (!buffer) {
+              throw new Error('should never happen');
+            }
+            return buffer.data;
+          }));
+          messageStream.next(combinedBuffer);
+        }
 
-      buffers[segment.seqAck / segmentSizeInBytes] = {
-        data: segment.data,
-        seqAck: segment.seqAck
-      };
-
-      const nextExpected = findNextSeq(buffers, segmentSizeInBytes);
-      console.log('buffers', buffers);
-      
-      if (segment.done) {
-        console.log('got done');
-        receivedDone = true;
-      }
-      
-      const lastBuffer = buffers[buffers.length - 1];
-      console.log({ nextExpected, lastBufferAck: lastBuffer && lastBuffer.seqAck + segmentSizeInBytes })
-      
-      if (receivedDone && lastBuffer && nextExpected === lastBuffer.seqAck + segmentSizeInBytes) {
-        const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
-          if (!buffer) {
-            throw new Error('should never happen');
-          }
-          return buffer.data;
-        }));
-        messageStream.next(combinedBuffer);
-      }
-
-      // ack
-      await sendSegment({
-        messageId: segment.messageId,
-        seqAck: nextExpected,
-        data: new Buffer(''),
-        done: false,
-      });
-    })
+        // ack
+        await sendSegment({
+          messageId: segment.messageId,
+          seqAck: nextExpected,
+          data: new Buffer(''),
+          done: false,
+        });
+      })
+    });
   });
   return messageStream as Observable<Buffer>;
 }
 
-function findNextSeq(
-  buffers: ({ data: Buffer, seqAck: number } | undefined)[],
+export function findNextSequenceNumber(
+  buffers: ({ seqAck: number } | undefined)[],
   segmentSizeInBytes: number
 ) {
   if (buffers.length === 0) {
@@ -375,7 +364,7 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
   const segmentStream = _segmentStream.filter(segment => segment.messageId === id);
 
   segmentStream.subscribe(seg => {
-    console.log({seg})
+    console.log({ seg })
   })
 
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
