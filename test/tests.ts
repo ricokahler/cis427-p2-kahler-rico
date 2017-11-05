@@ -5,6 +5,7 @@ import * as uuid from 'uuid/v4';
 import { range } from 'lodash';
 import { Observable, Observer, ReplaySubject } from 'rxjs';
 
+import { DeferredPromise } from '../src/rudp/task-queue';
 import {
   Segment, findNextSequenceNumber, segmentToString, stringToSegment, createMessageStream,
   sendMessageWithWindow
@@ -171,13 +172,12 @@ describe('sendMessageWithWindow', function () {
     const segmentSize = 4;
     const windowSize = 3;
     const segmentTimeout = 2000;
-    let messageId: string;
 
     const segmentsSent = [] as Segment[];
     const segmentStream = new ReplaySubject<Segment>();
 
     const sendSegment = async (segment: Segment) => {
-      messageId = segment.messageId;
+      const messageId = segment.messageId;
       segmentsSent.push(segment);
       segmentStream.next({ messageId, seqAck: segment.seqAck + segmentSize });
       return Promise.resolve();
@@ -194,6 +194,66 @@ describe('sendMessageWithWindow', function () {
     const finalBuffer = Buffer.concat(
       segmentsSent.map(segment => segment.data).filter(x => x) as Buffer[]
     );
+
+    expect(finalBuffer.toString()).to.be.equal(message);
+  });
+
+  it('fast re-transmits', async function () {
+    const message = 'The quick brown fox jumps over the lazy dog.';
+    const segmentSize = 4;
+    const windowSize = 3;
+    const segmentTimeout = 2000;
+    const segmentSeqToRetransmit = segmentSize * 3;
+
+    const segmentsReceived = [] as Segment[];
+    const seqAcks = [] as ({ ack: number } | { seq: number })[];
+    const ackStream = new ReplaySubject<Segment>();
+    const messageIdDeferred = new DeferredPromise<string>();
+
+    // mocks the interface for sending a segment
+    const sendSegment = async (segment: Segment) => {
+      const messageId = segment.messageId;
+      segmentsReceived.push(segment);
+      seqAcks.push({ seq: segment.seqAck });
+      seqAcks.push({ ack: segment.seqAck + segmentSize })
+      if (messageIdDeferred.state === 'pending') {
+        messageIdDeferred.resolve(segment.messageId);
+      }
+      ackStream.next({ messageId, seqAck: segment.seqAck + segmentSize });
+      return Promise.resolve();
+    }
+
+    messageIdDeferred.then(messageId => {
+      ackStream.next({ messageId, seqAck: segmentSeqToRetransmit });
+      ackStream.next({ messageId, seqAck: segmentSeqToRetransmit });
+      ackStream.next({ messageId, seqAck: segmentSeqToRetransmit });
+    });
+
+    await sendMessageWithWindow(message, {
+      sendSegment,
+      segmentStream: ackStream,
+      segmentSizeInBytes: segmentSize,
+      windowSize,
+      segmentTimeout,
+    });
+
+    // uncomment to see seq-acks
+    // console.log(seqAcks)
+
+    const segmentCount = segmentsReceived.reduce((segmentCount, segment) => {
+      return (/*if*/ segment.seqAck === segmentSeqToRetransmit
+        ? segmentCount + 1
+        : segmentCount
+      );
+    }, 0);
+
+    // did the segment re-transmit more than once?
+    expect(segmentCount > 1).to.be.equal(true);
+
+    const finalBuffer = Buffer.concat(segmentsReceived.reduce((inOrder, next) => {
+      inOrder[next.seqAck / segmentSize] = next;
+      return inOrder;
+    }, [] as Segment[]).map(segment => segment.data as Buffer).filter(x => x));
 
     expect(finalBuffer.toString()).to.be.equal(message);
   });

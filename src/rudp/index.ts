@@ -268,21 +268,21 @@ interface WindowOptions {
 
 class ClientConnection implements ReliableUdpSocket {
   info: Udp.AddressInfo;
-  messageChannelOptions: WindowOptions;
+  windowOptions: WindowOptions;
 
   messageQueue: TaskQueue<void>;
   messageStream: Observable<Buffer>;
 
   constructor(options: WindowOptions, info: Udp.AddressInfo) {
     this.info = info;
-    this.messageChannelOptions = options;
+    this.windowOptions = options;
     this.messageQueue = new TaskQueue<void>();
     this.messageStream = new Subject<Buffer>();
   }
 
   sendMessage(message: string | Buffer) {
     const promise = this.messageQueue.add(() =>
-      sendMessageWithWindow(message, this.messageChannelOptions)
+      sendMessageWithWindow(message, this.windowOptions)
     );
     this.messageQueue.execute();
     return promise;
@@ -360,15 +360,17 @@ export function findNextSequenceNumber(
 
 export function sendMessageWithWindow(message: string | Buffer, options: WindowOptions) {
   const {
-    sendSegment: _sendSegment,
-    segmentStream: _segmentStream,
+    sendSegment,
+    segmentStream,
     windowSize,
     segmentSizeInBytes,
     segmentTimeout,
   } = options;
   const id = uuid();
 
-  const segmentStream = _segmentStream.filter(segment => segment.messageId === id);
+  const segmentStreamForThisMessage = segmentStream.filter(segment => segment.messageId === id);
+
+  const ackCounts = [] as number[];
 
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
   const totalSegments = Math.ceil(buffer.byteLength / segmentSizeInBytes);
@@ -383,7 +385,6 @@ export function sendMessageWithWindow(message: string | Buffer, options: WindowO
       data,
       seqAck,
       messageId: id,
-      last: false,
     }) as Segment)
   );
   segments.push({
@@ -392,12 +393,24 @@ export function sendMessageWithWindow(message: string | Buffer, options: WindowO
     last: true
   });
 
+  // fast re-transmit
+  segmentStreamForThisMessage.subscribe(async segment => {
+    ackCounts[segment.seqAck] = (/*if*/ ackCounts[segment.seqAck] === undefined
+      ? 1
+      : ackCounts[segment.seqAck] + 1
+    );
+
+    if (ackCounts[segment.seqAck] >= 3) {
+      await sendSegment(segments[Math.floor(segment.seqAck / segmentSizeInBytes)]);
+    }
+  });
+
   function sendSegmentAndGetAck(segment: Segment) {
     return new Promise<number>(async (resolve, reject) => {
       let gotAck = false;
 
       // resolve promise on ack
-      (segmentStream
+      (segmentStreamForThisMessage
         .filter(segmentIn => segmentIn.seqAck > segment.seqAck)
         .take(1)
         .toPromise()
@@ -414,7 +427,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: WindowO
         }
       }, segmentTimeout);
 
-      await _sendSegment(segment);
+      await sendSegment(segment);
     });
   }
 

@@ -9,11 +9,19 @@ export class DeferredPromise<T> implements Promise<T> {
   catch: <TResult = never>(
     onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null
   ) => Promise<T | TResult>;
+  state: 'pending' | 'fulfilled' | 'rejected';
 
   constructor() {
+    this.state = 'pending';
     this._promise = new Promise((resolve, reject) => {
-      this.resolve = resolve;
-      this.reject = reject;
+      this.resolve = (value?: T | PromiseLike<T> | undefined) => {
+        this.state = 'fulfilled';
+        resolve(value);
+      };
+      this.reject = (reason: any) => {
+        this.state = 'rejected';
+        reject(reason);
+      };
     });
     this.then = this._promise.then.bind(this._promise);
     this.catch = this._promise.catch.bind(this._promise);
@@ -45,7 +53,7 @@ export default class TaskQueue<T> {
       this._queueFinished.resolve();
       return;
     }
-    const {task, deferredPromise} = top;
+    const { task, deferredPromise } = top;
     this._queue = this._queue.slice(1);
     try {
       const value = await task();
@@ -71,7 +79,7 @@ export default class TaskQueue<T> {
       task,
       deferredPromise
     });
-    
+
     return deferredPromise as Promise<T>;
   }
 }
