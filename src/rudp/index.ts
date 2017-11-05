@@ -34,12 +34,18 @@ export interface ReliableUdpServerOptions {
   segmentTimeout: number,
 }
 
+export interface Segment {
+  messageId: string,
+  seqAck: number,
+  data?: Buffer,
+  last?: boolean,
+  handshake?: 'syn' | 'syn-ack' | 'ack'
+}
+
 interface BufferWithInfo {
   message: Buffer,
   info: Udp.AddressInfo
 }
-
-type ConnectionState = undefined | 'initiated' | 'pending' | 'connected';
 
 /**
  * creates an identifer string by concatenating information in the `info`
@@ -51,14 +57,25 @@ function createSocketId(info: Udp.AddressInfo) {
 
 export function segmentToString(segment: Segment) {
   const { data, ...restOfSegment } = segment;
-  const dataBase64 = data.toString('base64');
-  return JSON.stringify({ ...restOfSegment, dataBase64 });
+  const dataBase64 = data && data.toString('base64');
+  const obj = { ...restOfSegment, dataBase64 }
+  return JSON.stringify(obj);
 }
 
 export function stringToSegment(stringSegment: string) {
-  const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment);
-  const data = new Buffer(dataBase64, 'base64');
-  return { ...restOfParsed, data } as Segment;
+  const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment) as {
+    dataBase64: string | undefined;
+    messageId: string;
+    seqAck: number;
+    last?: boolean | undefined;
+    handshake?: "syn" | "syn-ack" | "ack" | undefined;
+  };
+  const data = dataBase64 !== undefined ? new Buffer(dataBase64, 'base64') : undefined;
+  const newSegment = { ...restOfParsed } as Segment;
+  if (data) {
+    newSegment.data = data;
+  }
+  return newSegment;
 }
 
 export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOptions>) {
@@ -241,12 +258,6 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
   return reliableUdpSocket;
 }
 
-export interface Segment {
-  messageId: string,
-  seqAck: number,
-  data: Buffer,
-  done: boolean,
-}
 
 interface MessageChannelOptions {
   sendSegment: (segment: Segment) => Promise<void>,
@@ -285,42 +296,41 @@ class ClientConnection implements ReliableUdpSocket {
   }
 }
 
-function createMessageStream(
+export function createMessageStream(
   segmentStream: Observable<Segment>,
   sendSegment: (segment: Segment) => Promise<void>,
   segmentSizeInBytes: number,
 ) {
-  const messageStream = Observable.create((observer: Observer<Buffer>) => {
+  const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
     segmentStream.groupBy(value => value.messageId).subscribe(segmentsByMessage => {
       const buffers = [] as (Segment | undefined)[];
       let receivedDone = false;
       segmentsByMessage.subscribe(async segment => {
         buffers[segment.seqAck / segmentSizeInBytes] = segment;
-        const nextExpected = findNextSequenceNumber(buffers, segmentSizeInBytes);
+        const nextExpectedSequenceNumber = findNextSequenceNumber(buffers, segmentSizeInBytes);
 
-        if (segment.done) {
+        if (segment.last) {
           receivedDone = true;
         }
 
         const lastBuffer = buffers[buffers.length - 1];
-        console.log({ nextExpected, lastBufferAck: lastBuffer && lastBuffer.seqAck + segmentSizeInBytes })
 
-        if (receivedDone && lastBuffer && nextExpected === lastBuffer.seqAck + segmentSizeInBytes) {
+        if (receivedDone && lastBuffer && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes) {
           const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
             if (!buffer) {
               throw new Error('should never happen');
             }
-            return buffer.data;
+            return buffer.data || new Buffer('');
           }));
-          messageStream.next(combinedBuffer);
+          observer.next(combinedBuffer);
         }
 
         // ack
         await sendSegment({
           messageId: segment.messageId,
-          seqAck: nextExpected,
+          seqAck: nextExpectedSequenceNumber,
           data: new Buffer(''),
-          done: false,
+          last: false,
         });
       })
     });
@@ -380,14 +390,14 @@ function sendMessageWithWindow(message: string | Buffer, options: MessageChannel
       data,
       seqAck,
       messageId: id,
-      done: false,
+      last: false,
     }) as Segment)
   );
   segments.push({
     messageId: id,
     data: new Buffer(''),
     seqAck: totalSegments * segmentSizeInBytes,
-    done: true
+    last: true
   });
 
   function sendSegment(segment: Segment) {

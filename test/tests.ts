@@ -52,9 +52,22 @@ describe('stringToSegment, segmentToString', function () {
       messageId: uuid(),
       seqAck: Math.floor(Math.random() * 5) * 100,
       data: new Buffer(uuid()),
-      done: Math.random() > 0.5
+      last: Math.random() > 0.5,
+      handshake: 'syn',
     };
 
     expect(stringToSegment(segmentToString(segment))).to.be.deep.equal(segment);
   });
+
+  it('leaves out keys when undefined', function () {
+    const segment: Segment = {
+      messageId: uuid(),
+      seqAck: Math.floor(Math.random() * 5) * 100,
+      // data: new Buffer(uuid()), // leave this out
+      // last: Math.random() > 0.5
+    };
+
+    expect(stringToSegment(segmentToString(segment))).to.be.deep.equal(segment);
+  })
 });
+
