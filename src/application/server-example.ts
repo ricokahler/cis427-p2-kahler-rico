@@ -1,12 +1,6 @@
 import { createReliableUdpServer } from '../rudp';
 
-const rudpServer = createReliableUdpServer({
-  port: 8090,
-  maxSegmentSizeInBytes: 4,
-  segmentTimeout: 2000,
-  socketType: 'udp4',
-  windowSize: 5
-});
+const rudpServer = createReliableUdpServer();
 
 rudpServer.connectionStream.subscribe(async connection => {
   console.log('client connected! ', connection.info);

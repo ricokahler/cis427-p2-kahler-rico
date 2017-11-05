@@ -3,21 +3,18 @@ import * as Dns from 'dns';
 import { Observable, Observer, Subject } from 'rxjs';
 import * as uuid from 'uuid/v4';
 import { range } from 'lodash';
-const server = Udp.createSocket('udp4');
 import TaskQueue, { DeferredPromise } from './task-queue';
-const defaultSegmentSize = 4;
-let a = 0;
+
+const DEFAULT_SEGMENT_SIZE = 4;
+const DEFAULT_SEGMENT_TIMEOUT = 1000;
+const DEFAULT_PORT = 8090;
+const DEFAULT_HOST = 'localhost';
+const DEFAULT_WINDOW_SIZE = 5;
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
   messageStream: Observable<Buffer>,
   sendMessage: (message: string | Buffer) => Promise<void>,
-}
-
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve, reject) => {
-    setTimeout(() => { resolve() }, milliseconds);
-  })
 }
 
 export interface ReliableUdpServer {
@@ -26,11 +23,25 @@ export interface ReliableUdpServer {
 }
 
 export interface ReliableUdpServerOptions {
-  /** the port of the server. defaults to `8090` */
   port: number,
   maxSegmentSizeInBytes: number,
   windowSize: number,
-  socketType: Udp.SocketType,
+  segmentTimeout: number,
+}
+
+export interface ReliableUdpClientOptions {
+  hostname: string,
+  port: number,
+  segmentSizeInBytes: number,
+  windowSize: number,
+  segmentTimeout: number,
+}
+
+export interface WindowOptions {
+  sendSegment: (segment: Segment) => Promise<void>,
+  segmentStream: Observable<Segment>,
+  segmentSizeInBytes: number,
+  windowSize: number,
   segmentTimeout: number,
 }
 
@@ -39,10 +50,10 @@ export interface Segment {
   seqAck: number,
   data?: Buffer,
   last?: boolean,
-  handshake?: 'syn' | 'syn-ack' | 'ack'
+  handshake?: 'SYN' | 'SYN-ACK' | 'ACK'
 }
 
-interface BufferWithInfo {
+export interface BufferWithInfo {
   message: Buffer,
   info: Udp.AddressInfo
 }
@@ -68,7 +79,7 @@ export function stringToSegment(stringSegment: string) {
     messageId: string;
     seqAck: number;
     last?: boolean | undefined;
-    handshake?: "syn" | "syn-ack" | "ack" | undefined;
+    handshake?: 'SYN' | 'SYN-ACK' | 'ACK';
   };
   const data = dataBase64 !== undefined ? new Buffer(dataBase64, 'base64') : undefined;
   const newSegment = { ...restOfParsed } as Segment;
@@ -78,12 +89,13 @@ export function stringToSegment(stringSegment: string) {
   return newSegment;
 }
 
-export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOptions>) {
-  const port = rudpOptions.port || 8090;
-  const server = Udp.createSocket(rudpOptions.socketType || 'udp4');
-  const maxSegmentSizeInBytes = rudpOptions.maxSegmentSizeInBytes || defaultSegmentSize;
-  const windowSize = rudpOptions.windowSize || 5;
-  const segmentTimeout = rudpOptions.segmentTimeout || 2000;
+export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerOptions>) {
+  rudpOptions = rudpOptions || {};
+  const port = rudpOptions.port || DEFAULT_PORT;
+  const server = Udp.createSocket('udp4');
+  const maxSegmentSizeInBytes = rudpOptions.maxSegmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
+  const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
+  const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT;
 
   function sendSegmentTo(info: Udp.AddressInfo, message: string) {
     return new Promise<number>((resolve, reject) => {
@@ -146,11 +158,7 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
         connectionObserver.next(new ClientConnection({
           sendSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
             const segmentAsString = segmentToString(segment);
-            // await wait(3000);
-            a += 1;
-            if (a !== 2) {
-              await sendRawString(segmentAsString);
-            }
+            await sendRawString(segmentAsString);
           }),
           segmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
           segmentSizeInBytes: maxSegmentSizeInBytes,
@@ -172,11 +180,6 @@ export function createReliableUdpServer(rudpOptions: Partial<ReliableUdpServerOp
   return reliableUdpServer;
 }
 
-export interface ReliableUdpClientOptions {
-  hostname: string,
-  port: number,
-  segmentSizeInBytes: number,
-}
 
 function resolveName(hostname: string) {
   return new Promise<string[]>((resolve, reject) => {
@@ -190,16 +193,20 @@ function resolveName(hostname: string) {
   })
 }
 
-export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUdpClientOptions>) {
+export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableUdpClientOptions>) {
   const client = Udp.createSocket('udp4');
-  const address = (await resolveName(rudpOptions.hostname || 'localhost'))[0];
-  const port = rudpOptions.port || 8090;
-  const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || defaultSegmentSize;
+  rudpOptions = rudpOptions || {};
+  const address = (await resolveName(rudpOptions.hostname || DEFAULT_HOST))[0];
+  const port = rudpOptions.port || DEFAULT_PORT;
+  const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
+  const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
+  const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT
+  
   if (!address) {
     throw new Error(`Could not resolve hostname: "${rudpOptions.hostname}"`)
   }
 
-  function sendSegmentToServer(message: Buffer | string) {
+  function sendRawSegmentToServer(message: Buffer | string) {
     return new Promise<number>((resolve, reject) => {
       client.send(message, port, address, (error, bytes) => {
         if (error) {
@@ -217,16 +224,14 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
     });
   }) as Observable<BufferWithInfo>;
 
-  rawSegmentStream.subscribe(raw => console.log({ raw: raw.message.toString() }))
-
   // initiate the handshake
   console.log('sending SYNC...')
-  await sendSegmentToServer('__HANDSHAKE__SYN');
+  await sendRawSegmentToServer('__HANDSHAKE__SYN');
   // wait for the SYN-ACK
   await rawSegmentStream.filter(({ message }) => message.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
   console.log('got SYN-ACK. sending ACK...')
   // send the ACK
-  await sendSegmentToServer('__HANDSHAKE__ACK');
+  await sendRawSegmentToServer('__HANDSHAKE__ACK');
 
   // connection established here
   const segmentStream = (rawSegmentStream
@@ -250,20 +255,17 @@ export async function connectToReliableUdpServer(rudpOptions: Partial<ReliableUd
 
   const reliableUdpSocket: ReliableUdpSocket = {
     messageStream: createMessageStream(segmentStream, sendSegment, segmentSizeInBytes),
-    sendMessage: async (message: string | Buffer) => { },
+    sendMessage: (message: string | Buffer) => sendMessageWithWindow(message, {
+      segmentSizeInBytes,
+      segmentStream,
+      sendSegment,
+      segmentTimeout,
+      windowSize,
+    }),
     info: client.address()
   }
 
   return reliableUdpSocket;
-}
-
-
-interface WindowOptions {
-  sendSegment: (segment: Segment) => Promise<void>,
-  segmentStream: Observable<Segment>,
-  segmentSizeInBytes: number,
-  windowSize: number,
-  segmentTimeout: number,
 }
 
 class ClientConnection implements ReliableUdpSocket {
