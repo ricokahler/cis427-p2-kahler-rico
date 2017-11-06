@@ -264,3 +264,31 @@ describe('sendMessageWithWindow', function () {
 });
 
 
+describe('sendMessageWithWindow and createMessageStream', function () {
+  it('sendMessageWithWindow should be consumed by createMessageStream', async function () {
+    const message = 'The quick brown fox jumps over the lazy dog.';
+    const segmentSizeInBytes = 4;
+    const windowSize = 3;
+    const segmentTimeout = 2000;
+
+    const dataStream = new ReplaySubject<Segment>();
+    const ackStream = new ReplaySubject<Segment>();
+
+    const messageStream = createMessageStream({
+      segmentStream: dataStream,
+      sendSegment: async (segment: Segment) => ackStream.next(segment),
+      segmentSizeInBytes,
+    });
+
+    sendMessageWithWindow(message, {
+      segmentStream: ackStream,
+      sendSegment: async (segment: Segment) => dataStream.next(segment),
+      segmentSizeInBytes,
+      segmentTimeout,
+      windowSize,
+    });
+
+    const messageThrough = (await messageStream.take(1).toPromise()).toString();
+    expect(messageThrough).to.be.equal(message);
+  });
+})
