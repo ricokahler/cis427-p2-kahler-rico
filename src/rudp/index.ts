@@ -37,26 +37,33 @@ export interface ReliableUdpClientOptions {
   segmentTimeout: number,
 }
 
-export interface WindowOptions {
-  sendSegment: (segment: Segment) => Promise<void>,
-  segmentStream: Observable<Segment>,
+export interface SenderOptions {
+  sendSegment: (segment: DataSegment) => Promise<void>,
+  segmentStream: Observable<AckSegment>,
   segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
 }
 
-export interface MessageStreamOptions {
-  sendSegment: (segment: Segment) => Promise<void>,
-  segmentStream: Observable<Segment>,
+export interface ReceiverOptions {
+  sendSegment: (segment: AckSegment) => Promise<void>,
+  segmentStream: Observable<DataSegment>,
   segmentSizeInBytes: number,
 }
 
-export interface Segment {
+export interface HandshakeSegment {
+  handshake: 'syn' | 'syn-ack' | 'ack',
+}
+
+export interface AckSegment {
   messageId: string,
-  seqAck: number,
-  data?: Buffer,
-  last?: boolean,
-  handshake?: 'SYN' | 'SYN-ACK' | 'ACK'
+  ack: number,
+}
+
+export interface DataSegment {
+  messageId: string,
+  seq: number,
+  data?: string,
 }
 
 export interface BufferWithInfo {
@@ -86,13 +93,7 @@ export function stringToSegment(stringSegment: string) {
   if (!stringSegment) {
     throw new Error(`Could not convert string to segment because string was ${stringSegment}`);
   }
-  const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment) as {
-    dataBase64: string | undefined;
-    messageId: string;
-    seqAck: number;
-    last?: boolean | undefined;
-    handshake?: 'SYN' | 'SYN-ACK' | 'ACK';
-  };
+  const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment);
   const data = dataBase64 !== undefined ? new Buffer(dataBase64, 'base64') : undefined;
   const newSegment = { ...restOfParsed } as Segment;
   if (data) {
@@ -289,7 +290,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   return reliableUdpSocket;
 }
 
-export function createConnectionToClient(options: WindowOptions, info: Udp.AddressInfo) {
+export function createConnectionToClient(options: SenderOptions, info: Udp.AddressInfo) {
 
   function sendMessage(message: string | Buffer) {
     return sendMessageWithWindow(message, options);
@@ -304,7 +305,12 @@ export function createConnectionToClient(options: WindowOptions, info: Udp.Addre
   return socket;
 }
 
-export function createMessageStream(options: MessageStreamOptions) {
+/**
+ * consumes the `segmentStream` with sequence numbers and omits a stream of completed messages
+ * sending acknowledgements
+ * @param options 
+ */
+export function createMessageStream(options: ReceiverOptions) {
   const { segmentSizeInBytes, segmentStream, sendSegment } = options;
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
     (segmentStream
@@ -327,7 +333,7 @@ export function createMessageStream(options: MessageStreamOptions) {
             && lastBuffer
             && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes
           ) {
-            const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
+            const combinedBuffer = Buffzer.concat(buffers.filter(x => x).map(buffer => {
               if (!buffer) {
                 throw new Error(`Could not concatenate buffer because it was ${buffer}.`);
               }
@@ -370,7 +376,7 @@ export function findNextSequenceNumber(
   return lastBuffer.seqAck + segmentSizeInBytes;
 }
 
-export function sendMessageWithWindow(message: string | Buffer, options: WindowOptions) {
+export function sendMessageWithWindow(message: string | Buffer, options: SenderOptions) {
   const {
     sendSegment,
     segmentStream,
