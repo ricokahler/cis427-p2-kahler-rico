@@ -4,7 +4,7 @@ import { range } from 'lodash';
 import { DeferredPromise } from './util';
 import { DataSegment, AckSegment } from './';
 
-const LOGGER_PREFIX = '[SENDER]: '
+const LOGGER_PREFIX = '[SENDER]: ';
 
 export interface SenderOptions {
   sendDataSegment: (segment: DataSegment) => Promise<void>,
@@ -23,9 +23,11 @@ export function createSender(message: string | Buffer, options: SenderOptions) {
     segmentSizeInBytes,
     segmentTimeout,
   } = options;
-  const log = options.logger || ((logMessage: string) => { /* do nothing */ });
-
-  log(`${LOGGER_PREFIX}sending message: "${message}".`)
+  function log(logMessage: string) {
+    if (options.logger) { options.logger(`${LOGGER_PREFIX}${logMessage}`); }
+  }
+  
+  log(`sending message: "${message}"...`)
 
   const id = uuid();
   const segmentStreamForThisMessage = ackSegmentStream.filter(segment => segment.messageId === id);
@@ -55,7 +57,10 @@ export function createSender(message: string | Buffer, options: SenderOptions) {
     data: new Buffer(''),
   });
 
-  log(`${LOGGER_PREFIX}SEGMENTS TO SEND:\n${dataSegments.map(segment => `    ${JSON.stringify(segment)}`).join('\n')}`);
+  log(`segments to send:\n${dataSegments
+    .map(segment => `    ${JSON.stringify(segment)}`)
+    .join('\n')
+    }`);
 
   // fast re-transmit
   segmentStreamForThisMessage.subscribe(async ackSegment => {
@@ -65,9 +70,11 @@ export function createSender(message: string | Buffer, options: SenderOptions) {
     );
 
     if (ackCounts[ackSegment.ack] >= 3) {
-      log(`${LOGGER_PREFIX}FAST RE-TRANSMIT: got more than three ACKs for segment ${ackSegment.ack}`);
+      log(
+        `fast re-transmit: got more than three ACKs for segment ${ackSegment.ack}. `
+        + `Re-sending segment...`
+      );
       const segmentToRetransmit = dataSegments[Math.floor(ackSegment.ack / segmentSizeInBytes)];
-      // throw new Error()
       if (segmentToRetransmit) {
         await sendDataSegment(segmentToRetransmit);
       }
@@ -106,14 +113,17 @@ export function createSender(message: string | Buffer, options: SenderOptions) {
   const finished = new DeferredPromise<void>();
 
   async function send(segment: DataSegment | undefined) {
+
     if (!segment) {
       // the segment will be undefined when the next segment index is greater than the number of
       // items. this occurs when all the previous items have been sent
       if (greatestAck > buffer.byteLength) {
         // when the greatest ack is larger than the bufferLength, we know we've sent every segment
         // got received acknowledgement.
-        log(`${LOGGER_PREFIX}finished sending message: "${message}"!`);
-        finished.resolve();
+        if (finished.state === 'pending') {
+          log(`finished sending message: "${message}"!`);
+          finished.resolve();
+        }
       }
       return;
     }

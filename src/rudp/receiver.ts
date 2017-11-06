@@ -45,7 +45,9 @@ export function findNextSequenceNumber(
  */
 export function createReceiver(options: ReceiverOptions) {
   const { segmentSizeInBytes, dataSegmentStream, sendAckSegment } = options;
-  const log = options.logger || ((logMessage: string) => { /* do nothing */ });
+  function log(loggerMessage: string) {
+    if (options.logger) { options && options.logger(`${LOGGER_PREFIX}${loggerMessage}`) }
+  }
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
     (dataSegmentStream
       .filter(value => value.messageId !== undefined)
@@ -53,14 +55,15 @@ export function createReceiver(options: ReceiverOptions) {
       .subscribe(segmentsByMessage => {
         let receivedLast = false;
         const receivedDataSegments = [] as (DataSegment | undefined)[];
-        segmentsByMessage.subscribe(async segment => {
-          receivedDataSegments[Math.floor(segment.seq / segmentSizeInBytes)] = segment;
+        segmentsByMessage.subscribe(async dataSegment => {
+          log(`received SEQ ${dataSegment.seq}`)
+          receivedDataSegments[Math.floor(dataSegment.seq / segmentSizeInBytes)] = dataSegment;
           const nextExpectedSequenceNumber = findNextSequenceNumber(
             receivedDataSegments,
             segmentSizeInBytes
           );
 
-          if (segment.last) {
+          if (dataSegment.last) {
             receivedLast = true;
           }
           const lastBuffer = receivedDataSegments[receivedDataSegments.length - 1];
@@ -82,13 +85,15 @@ export function createReceiver(options: ReceiverOptions) {
               }
               return buffer.data || new Buffer('');
             }));
+            log(`finished receiving message: "${combinedBuffer.toString()}"!`)
             observer.next(combinedBuffer);
           }
 
           // ack
+          log(`sending ACK ${nextExpectedSequenceNumber}`);
           await sendAckSegment({
             ack: nextExpectedSequenceNumber,
-            messageId: segment.messageId,
+            messageId: dataSegment.messageId,
           });
         })
       })

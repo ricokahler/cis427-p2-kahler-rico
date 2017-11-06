@@ -10,8 +10,8 @@ import {
   serializeHandshakeSegment, timer, TaskQueue
 } from './util';
 
-import { createReceiver } from './create-message-stream';
-import { createSender } from './send-message-with-window';
+import { createReceiver } from './receiver';
+import { createSender } from './sender';
 
 const DEFAULT_SEGMENT_SIZE = 4;
 const DEFAULT_SEGMENT_TIMEOUT = 1000;
@@ -88,8 +88,6 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
     server.on('message', (raw, info) => observer.next({ raw, info }));
   }) as Observable<RawSegment>;
 
-  rawSegmentStream.subscribe(({ raw }) => { log(`IN : ${raw.toString()}`); })
-
   const connectionStream = Observable.create((connectionObserver: Observer<ReliableUdpSocket>) => {
     // group each segment by their socket info
     const segmentsGroupedByClient = rawSegmentStream.groupBy(({ info }) => JSON.stringify({ ...info }));
@@ -101,7 +99,6 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
        * sends a raw segment over UDP
        */
       function sendRawSegmentToClient(segment: string | Buffer) {
-        log(`OUT: ${segment.toString()}`);
         return new Promise<number>((resolve, reject) => {
           server.send(segment, info.port, info.address, (error, bytes) => {
             if (error) {
@@ -213,7 +210,6 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   }
 
   function sendRawSegmentToServer(message: Buffer | string) {
-    log(`OUT: ${message.toString()}`);
     return new Promise<number>((resolve, reject) => {
       client.send(message, port, address, (error, bytes) => {
         if (error) {
@@ -231,7 +227,6 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
       observer.next({ raw, info });
     });
   }) as Observable<RawSegment>;
-  rawSegmentStream.subscribe(({ raw }) => log(`IN : ${raw.toString()}`))
   const rawSegmentStreamFromServer = rawSegmentStream.filter(({ info }) => {
     return info.address === address && info.port === port
   });
