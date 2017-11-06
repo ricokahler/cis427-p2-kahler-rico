@@ -25,7 +25,7 @@ export interface ReliableUdpServer {
 
 export interface ReliableUdpServerOptions {
   port: number,
-  maxSegmentSizeInBytes: number,
+  segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
 }
@@ -193,7 +193,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
   rudpOptions = rudpOptions || {};
   const port = rudpOptions.port || DEFAULT_PORT;
   const server = Udp.createSocket('udp4');
-  const maxSegmentSizeInBytes = rudpOptions.maxSegmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
+  const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
   const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
   const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT;
 
@@ -252,24 +252,48 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
               handshake: 'syn-ack',
             }));
           } else if (handshakeSegment.handshake === 'ack') {
-            connectionObserver.next(createConnectionToClient({
-              sendDataSegment: async (dataSegment: DataSegment) => {
-                await sendRawSegmentToClient(serializeDataSegment(dataSegment))
-              },
-              ackSegmentStream: (rawSegmentStreamOfOneClient
-                .filter(({ raw }) => {
-                  try {
-                    return isAckSegment(JSON.parse(raw.toString()))
-                  } catch {
-                    return false;
-                  }
-                })
-                .map(({ raw }) => parseAckSegment(raw.toString()))
-              ),
-              segmentSizeInBytes: maxSegmentSizeInBytes,
-              windowSize,
-              segmentTimeout,
-            }, info));
+
+            // message stream
+            const dataSegmentStream = rawSegmentStreamOfOneClient.filter(({ raw }) => {
+              try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
+              catch { return false; }
+            }).map(({ raw }) => parseDataSegment(raw.toString()));
+            async function sendAckSegment(ackSegment: AckSegment) {
+              sendRawSegmentToClient(serializeAckSegment(ackSegment));
+            }
+            const messageStream = createMessageStream({
+              dataSegmentStream,
+              sendAckSegment,
+              segmentSizeInBytes,
+            });
+
+            // send message with window
+            const ackSegmentStream = (rawSegmentStreamOfOneClient
+              .filter(({ raw }) => {
+                try { return isAckSegment(JSON.parse(raw.toString())) }
+                catch { return false; }
+              })
+              .map(({ raw }) => parseAckSegment(raw.toString()))
+            );
+            async function sendDataSegment(dataSegment: DataSegment) {
+              await sendRawSegmentToClient(serializeDataSegment(dataSegment));
+            }
+            async function sendMessage(message: string | Buffer) {
+              sendMessageWithWindow(message, {
+                ackSegmentStream,
+                sendDataSegment,
+                windowSize,
+                segmentTimeout,
+                segmentSizeInBytes,
+              });
+            }
+
+            const clientSocket: ReliableUdpSocket = {
+              info,
+              messageStream,
+              sendMessage,
+            }
+            connectionObserver.next(clientSocket);
           }
         });
       });
@@ -351,6 +375,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
 
   await sendRawSegmentToServer(serializeHandshakeSegment({ clientId, handshake: 'ack' }));
 
+  // create message stream
   const dataSegmentStream = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
@@ -358,7 +383,16 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     })
     .map(({ raw }) => parseDataSegment(raw.toString()))
   );
+  async function sendAckSegment(ackSegment: AckSegment) {
+    await sendRawSegmentToServer(serializeAckSegment(ackSegment));
+  }
+  const messageStream = createMessageStream({
+    dataSegmentStream,
+    sendAckSegment,
+    segmentSizeInBytes
+  });
 
+  // send message function
   const ackSegmentStream = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isAckSegment(JSON.parse(raw.toString())) }
@@ -366,48 +400,44 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     })
     .map(({ raw }) => parseAckSegment(raw.toString()))
   );
-
-  async function sendAckSegment(ackSegment: AckSegment) {
-    await sendRawSegmentToServer(serializeAckSegment(ackSegment));
-  }
-
   async function sendDataSegment(dataSegment: DataSegment) {
     await sendRawSegmentToServer(serializeDataSegment(dataSegment));
   }
-
-  const reliableUdpSocket: ReliableUdpSocket = {
-    messageStream: createMessageStream({
-      dataSegmentStream,
-      sendAckSegment,
-      segmentSizeInBytes
-    }),
-    sendMessage: (message: string | Buffer) => sendMessageWithWindow(message, {
-      segmentSizeInBytes,
+  async function sendMessage(message: string | Buffer) {
+    await sendMessageWithWindow(message, {
       ackSegmentStream,
       sendDataSegment,
-      segmentTimeout,
       windowSize,
-    }),
-    info: { address, family: 'IPv4', port }
+      segmentTimeout,
+      segmentSizeInBytes,
+    })
+  }
+
+  const reliableUdpSocket: ReliableUdpSocket = {
+    messageStream,
+    sendMessage,
+    info: client.address(), // TODO find out if this should be the server info or client
   }
 
   return reliableUdpSocket;
 }
 
-export function createConnectionToClient(options: SenderOptions, info: Udp.AddressInfo) {
+// export function createConnectionToClient(options: SenderOptions, info: Udp.AddressInfo) {
 
-  function sendMessage(message: string | Buffer) {
-    return sendMessageWithWindow(message, options);
-  }
+//   function sendMessage(message: string | Buffer) {
+//     return sendMessageWithWindow(message, options);
+//   }
 
-  const socket: ReliableUdpSocket = {
-    info,
-    messageStream: Observable.never(),//createMessageStream(options),
-    sendMessage
-  };
+//   const socket: ReliableUdpSocket = {
+//     info,
+//     messageStream: createMessageStream({
 
-  return socket;
-}
+//     }),
+//     sendMessage
+//   };
+
+//   return socket;
+// }
 
 /**
  * consumes the `segmentStream` with sequence numbers and omits a stream of completed messages
