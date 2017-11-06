@@ -38,16 +38,16 @@ export interface ReliableUdpClientOptions {
 }
 
 export interface SenderOptions {
-  sendSegment: (segment: DataSegment) => Promise<void>,
-  segmentStream: Observable<AckSegment>,
+  sendDataSegment: (segment: DataSegment) => Promise<void>,
+  ackSegmentStream: Observable<AckSegment>,
   segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
 }
 
 export interface ReceiverOptions {
-  sendSegment: (segment: AckSegment) => Promise<void>,
-  segmentStream: Observable<DataSegment>,
+  sendAckSegment: (segment: AckSegment) => Promise<void>,
+  dataSegmentStream: Observable<DataSegment>,
   segmentSizeInBytes: number,
 }
 
@@ -236,12 +236,12 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
         console.log('got ACK, connection established');
 
         connectionObserver.next(createConnectionToClient({
-          sendSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
+          sendDataSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
             const segmentAsString = segmentToString(segment);
             // await wait(5000);
             await sendRawSegment(segmentAsString);
           }),
-          segmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
+          ackSegmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
           segmentSizeInBytes: maxSegmentSizeInBytes,
           windowSize,
           segmentTimeout,
@@ -325,11 +325,11 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   }
 
   const reliableUdpSocket: ReliableUdpSocket = {
-    messageStream: createMessageStream({ segmentStream, sendSegment, segmentSizeInBytes }),
+    messageStream: createMessageStream({ dataSegmentStream, sendAckSegment, segmentSizeInBytes }),
     sendMessage: (message: string | Buffer) => sendMessageWithWindow(message, {
       segmentSizeInBytes,
-      segmentStream,
-      sendSegment,
+      ackSegmentStream,
+      sendDataSegment,
       segmentTimeout,
       windowSize,
     }),
@@ -360,9 +360,9 @@ export function createConnectionToClient(options: SenderOptions, info: Udp.Addre
  * @param options 
  */
 export function createMessageStream(options: ReceiverOptions) {
-  const { segmentSizeInBytes, segmentStream, sendSegment } = options;
+  const { segmentSizeInBytes, dataSegmentStream, sendAckSegment } = options;
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
-    (segmentStream
+    (dataSegmentStream
       .filter(value => value.messageId !== undefined)
       .groupBy(value => value.messageId)
       .subscribe(segmentsByMessage => {
@@ -401,7 +401,7 @@ export function createMessageStream(options: ReceiverOptions) {
           }
 
           // ack
-          await sendSegment({
+          await sendAckSegment({
             messageId: segment.messageId,
             ack: nextExpectedSequenceNumber,
           });
@@ -442,69 +442,74 @@ export function findNextSequenceNumber(
 
 export function sendMessageWithWindow(message: string | Buffer, options: SenderOptions) {
   const {
-    sendSegment,
-    segmentStream,
+    sendDataSegment,
+    ackSegmentStream,
     windowSize,
     segmentSizeInBytes,
     segmentTimeout,
   } = options;
   const id = uuid();
 
-  const segmentStreamForThisMessage = segmentStream.filter(segment => segment.messageId === id);
+  const segmentStreamForThisMessage = ackSegmentStream.filter(segment => segment.messageId === id);
 
   const ackCounts = [] as number[];
 
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
   const totalSegments = Math.ceil(buffer.byteLength / segmentSizeInBytes);
 
-  const segments = (range(totalSegments)
+  const dataSegments = (range(totalSegments)
     .map(i => i * segmentSizeInBytes)
-    .map(seqAck => ({
-      seqAck,
-      data: buffer.slice(seqAck, seqAck + segmentSizeInBytes),
+    .map(seq => ({
+      seq,
+      data: buffer.slice(seq, seq + segmentSizeInBytes),
     }))
-    .map(({ seqAck, data }) => ({
-      data,
-      seqAck,
-      messageId: id,
-    }) as Segment)
+    .map(({ seq, data }) => {
+      const dataSegment: DataSegment = {
+        data,
+        seq,
+        messageId: id,
+      };
+      return dataSegment;
+    })
   );
-  segments.push({
+  // push last empty segment
+  dataSegments.push({
     messageId: id,
-    seqAck: totalSegments * segmentSizeInBytes,
-    last: true
+    seq: totalSegments * segmentSizeInBytes,
+    last: true,
+    data: new Buffer(''),
   });
 
   // console.log('SEGMENTS TO SEND', segments);
 
   // fast re-transmit
-  segmentStreamForThisMessage.subscribe(async segment => {
-    ackCounts[segment.seqAck] = (/*if*/ ackCounts[segment.seqAck] === undefined
+  segmentStreamForThisMessage.subscribe(async ackSegment => {
+    ackCounts[ackSegment.ack] = (/*if*/ ackCounts[ackSegment.ack] === undefined
       ? 1
-      : ackCounts[segment.seqAck] + 1
+      : ackCounts[ackSegment.ack] + 1
     );
 
-    if (ackCounts[segment.seqAck] >= 3) {
-      const segmentToRetransmit = segments[Math.floor(segment.seqAck / segmentSizeInBytes)];
+    if (ackCounts[ackSegment.ack] >= 3) {
+      const segmentToRetransmit = dataSegments[Math.floor(ackSegment.ack / segmentSizeInBytes)];
       // throw new Error()
       if (segmentToRetransmit) {
-        await sendSegment(segmentToRetransmit);
+        await sendDataSegment(segmentToRetransmit);
       }
     }
   });
 
-  function sendSegmentAndGetAck(segment: Segment) {
+  function sendDataSegmentAndWaitForAck(segment: DataSegment) {
     return new Promise<number>(async (resolve, reject) => {
       let gotAck = false;
 
       // resolve promise on ack
       (segmentStreamForThisMessage
-        .filter(segmentIn => segmentIn.seqAck > segment.seqAck)
+        .filter(ackSegment => ackSegment.ack > segment.seq)
         .take(1)
         .toPromise()
-        .then(segmentIn => {
+        .then(ackSegment => {
           gotAck = true;
-          resolve(segmentIn.seqAck);
+          resolve(ackSegment.ack);
         })
       );
 
@@ -515,7 +520,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
         }
       }, segmentTimeout);
 
-      await sendSegment(segment);
+      await sendDataSegment(segment);
     });
   }
 
@@ -524,22 +529,27 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
 
   const finished = new DeferredPromise<void>();
 
-  async function send(segment: Segment | undefined) {
+  async function send(segment: DataSegment | undefined) {
     if (!segment) {
+      // the segment will be undefined when the next segment index is greater than the number of
+      // items. this occurs when all the previous items have been sent
       if (greatestAck > buffer.byteLength) {
+        // when the greatest ack is larger than the bufferLength, we know we've sent every segment
+        // got received acknowledgement.
         finished.resolve();
       }
       return;
     }
     try {
-      if (segment.seqAck > lastSegmentSent) {
-        lastSegmentSent = segment.seqAck;
+      if (segment.seq > lastSegmentSent) {
+        lastSegmentSent = segment.seq;
       }
-      const ack = await sendSegmentAndGetAck(segment);
+      const ack = await sendDataSegmentAndWaitForAck(segment);
       if (ack > greatestAck) {
         greatestAck = ack;
       }
-      const nextSegment = segments[Math.floor(lastSegmentSent / segmentSizeInBytes) + 1];
+      const nextSegmentIndex = Math.floor(lastSegmentSent / segmentSizeInBytes) + 1;
+      const nextSegment = dataSegments[nextSegmentIndex];
       send(nextSegment);
     } catch {
       // re-send segment that timed out
@@ -548,7 +558,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
   }
 
   // bootstrap the sending
-  segments.slice(0, windowSize).forEach(send);
+  dataSegments.slice(0, windowSize).forEach(send);
 
   return finished;
 }
