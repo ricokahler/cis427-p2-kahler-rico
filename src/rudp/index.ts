@@ -6,7 +6,7 @@ import { range } from 'lodash';
 import TaskQueue, { DeferredPromise } from './task-queue';
 
 const DEFAULT_SEGMENT_SIZE = 4;
-const DEFAULT_SEGMENT_TIMEOUT = 1000;
+const DEFAULT_SEGMENT_TIMEOUT = 10000;
 const DEFAULT_PORT = 8090;
 const DEFAULT_HOST = 'localhost';
 const DEFAULT_WINDOW_SIZE = 5;
@@ -73,6 +73,9 @@ function createSocketId(info: Udp.AddressInfo) {
 }
 
 export function segmentToString(segment: Segment) {
+  if (!segment) {
+    throw new Error (`Could not convert segment to string because it was ${segment}`)
+  }
   const { data, ...restOfSegment } = segment;
   const dataBase64 = data && data.toString('base64');
   const obj = { ...restOfSegment, dataBase64 }
@@ -80,6 +83,9 @@ export function segmentToString(segment: Segment) {
 }
 
 export function stringToSegment(stringSegment: string) {
+  if (!stringSegment) {
+    throw new Error(`Could not convert string to segment because string was ${stringSegment}`);
+  }
   const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment) as {
     dataBase64: string | undefined;
     messageId: string;
@@ -135,13 +141,17 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
     console.log(`Reliable UDP Server running on port ${port}.`)
   });
 
-  const segmentStream = Observable.create((observer: Observer<BufferWithInfo>) => {
+  const rawSegmentStream = Observable.create((observer: Observer<BufferWithInfo>) => {
     server.on('message', (message, info) => observer.next({ message, info }));
   }) as Observable<BufferWithInfo>;
 
+  // rawSegmentStream.subscribe(({ message }) => {
+  //   console.log('RAW MESSAGE:', message.toString());
+  // })
+
   const connectionStream = Observable.create((connectionObserver: Observer<ReliableUdpSocket>) => {
     // group each segment by their socket info
-    const segmentsGroupedByClient = segmentStream.groupBy(({ info }) => createSocketId(info));
+    const segmentsGroupedByClient = rawSegmentStream.groupBy(({ info }) => createSocketId(info));
     segmentsGroupedByClient.subscribe(segmentStreamOfOneClient => {
       // a stream of segments that are the message of `__HANDSHAKE__SYN`
       const synStream = segmentStreamOfOneClient.filter(({ message }) =>
@@ -175,7 +185,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
         // connection established
         console.log('got ACK, connection established');
 
-        connectionObserver.next(createClientConnection({
+        connectionObserver.next(createConnectionToClient({
           sendSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
             const segmentAsString = segmentToString(segment);
             // await wait(5000);
@@ -230,6 +240,8 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     });
   }) as Observable<BufferWithInfo>;
 
+  // rawSegmentStream.subscribe(rawSegment => console.log('RAW MESSAGE: ', rawSegment.message.toString()));
+
   // initiate the handshake
   console.log('sending SYNC...')
   await sendRawSegmentToServer('__HANDSHAKE__SYN');
@@ -248,6 +260,9 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
 
   function sendSegment(segment: Segment) {
     return new Promise<void>((resolve, reject) => {
+      if (!segment) {
+        throw new Error (`Could not send segment because because it was ${segment}`);
+      }
       const segmentAsString = segmentToString(segment);
       client.send(segmentAsString, port, address, (error, bytes) => {
         if (error) {
@@ -274,20 +289,16 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   return reliableUdpSocket;
 }
 
-export function createClientConnection(options: WindowOptions, info: Udp.AddressInfo) {
-
-  const messageQueue = new TaskQueue<void>();
+export function createConnectionToClient(options: WindowOptions, info: Udp.AddressInfo) {
 
   function sendMessage(message: string | Buffer) {
-    const promise = messageQueue.add(() => sendMessageWithWindow(message, options));
-    messageQueue.execute();
-    return promise;
+    return sendMessageWithWindow(message, options);
   }
 
   const socket: ReliableUdpSocket = {
     info,
-    messageStream: createMessageStream(options),
-    sendMessage,
+    messageStream: Observable.never(),//createMessageStream(options),
+    sendMessage
   };
 
   return socket;
@@ -318,7 +329,7 @@ export function createMessageStream(options: MessageStreamOptions) {
           ) {
             const combinedBuffer = Buffer.concat(buffers.filter(x => x).map(buffer => {
               if (!buffer) {
-                throw new Error('should never happen');
+                throw new Error(`Could not concatenate buffer because it was ${buffer}.`);
               }
               return buffer.data || new Buffer('');
             }));
@@ -394,6 +405,8 @@ export function sendMessageWithWindow(message: string | Buffer, options: WindowO
     last: true
   });
 
+  // console.log('SEGMENTS TO SEND', segments);
+
   // fast re-transmit
   segmentStreamForThisMessage.subscribe(async segment => {
     ackCounts[segment.seqAck] = (/*if*/ ackCounts[segment.seqAck] === undefined
@@ -402,7 +415,11 @@ export function sendMessageWithWindow(message: string | Buffer, options: WindowO
     );
 
     if (ackCounts[segment.seqAck] >= 3) {
-      await sendSegment(segments[Math.floor(segment.seqAck / segmentSizeInBytes)]);
+      const segmentToRetransmit = segments[Math.floor(segment.seqAck / segmentSizeInBytes)];
+      // throw new Error()
+      if (segmentToRetransmit) {
+        await sendSegment(segmentToRetransmit);
+      }
     }
   });
 

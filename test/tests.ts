@@ -59,7 +59,7 @@ describe('stringToSegment, segmentToString', function () {
       seqAck: Math.floor(Math.random() * 5) * 100,
       data: new Buffer(uuid()),
       last: Math.random() > 0.5,
-      handshake: 'syn',
+      handshake: 'SYN',
     };
 
     expect(stringToSegment(segmentToString(segment))).to.be.deep.equal(segment);
@@ -107,7 +107,9 @@ describe('createMessageStream', function () {
       return Promise.resolve();
     }
 
-    const messageStream = await createMessageStream(segmentStream, sendSegment, segmentSize);
+    const messageStream = await createMessageStream({
+      segmentStream, sendSegment, segmentSizeInBytes: segmentSize
+    });
     const finalBuffer = await messageStream.take(1).toPromise();
     expect(finalBuffer.toString()).to.be.equal(message);
     expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
@@ -159,7 +161,9 @@ describe('createMessageStream', function () {
     }
 
 
-    const messageStream = await createMessageStream(segmentStream, sendSegment, segmentSize);
+    const messageStream = await createMessageStream({
+      segmentStream, sendSegment, segmentSizeInBytes: segmentSize
+    });
     const finalBuffer = await messageStream.take(1).toPromise();
     expect(finalBuffer.toString()).to.be.equal(message);
     // expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
@@ -258,3 +262,5 @@ describe('sendMessageWithWindow', function () {
     expect(finalBuffer.toString()).to.be.equal(message);
   });
 });
+
+
