@@ -5,9 +5,9 @@ import * as uuid from 'uuid/v4';
 import { range } from 'lodash';
 
 import {
-  dataSegmentToJsonable, isAckSegment, isDataSegmentJsonable, isHandshakeSegment, parseAckSegment,
-  parseDataSegment, parseHandshakeSegment, resolveName, serializeAckSegment, serializeDataSegment,
-  serializeHandshakeSegment, timer
+  isAckSegment, isDataSegmentJsonable, isHandshakeSegment, parseAckSegment, parseDataSegment,
+  parseHandshakeSegment, resolveName, serializeAckSegment, serializeDataSegment,
+  serializeHandshakeSegment, timer, TaskQueue
 } from './util';
 
 import { createMessageStream } from './create-message-stream';
@@ -136,10 +136,6 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             }));
           } else if (handshakeSegment.handshake === 'ack') {
 
-            rawSegmentStreamOfOneClient.subscribe(a => {
-              console.log({ a })
-            })
-
             // message stream
             const dataSegmentStream = rawSegmentStream.filter(({ raw }) => {
               try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
@@ -165,14 +161,17 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             async function sendDataSegment(dataSegment: DataSegment) {
               await sendRawSegmentToClient(serializeDataSegment(dataSegment));
             }
+            const messageQueue = new TaskQueue<void>();
             async function sendMessage(message: string | Buffer) {
-              sendMessageWithWindow(message, {
+              const promise = messageQueue.add(() => sendMessageWithWindow(message, {
                 ackSegmentStream,
                 sendDataSegment,
                 windowSize,
                 segmentTimeout,
                 segmentSizeInBytes,
-              });
+              }));
+              messageQueue.execute();
+              return promise;
             }
 
             const clientSocket: ReliableUdpSocket = {
@@ -287,20 +286,23 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   async function sendDataSegment(dataSegment: DataSegment) {
     await sendRawSegmentToServer(serializeDataSegment(dataSegment));
   }
+  const messageQueue = new TaskQueue<void>();
   async function sendMessage(message: string | Buffer) {
-    await sendMessageWithWindow(message, {
+    const promise = messageQueue.add(() => sendMessageWithWindow(message, {
       ackSegmentStream,
       sendDataSegment,
       windowSize,
       segmentTimeout,
       segmentSizeInBytes,
-    })
+    }));
+    messageQueue.execute();
+    return promise;
   }
 
   const reliableUdpSocket: ReliableUdpSocket = {
     messageStream,
     sendMessage,
-    info: client.address(), // TODO find out if this should be the server info or client
+    info: client.address(),
   }
 
   return reliableUdpSocket;

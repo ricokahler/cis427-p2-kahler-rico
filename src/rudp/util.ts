@@ -147,3 +147,57 @@ export class DeferredPromise<T> implements Promise<T> {
 
   [Symbol.toStringTag] = 'Promise' as 'Promise';
 }
+
+interface QueueItem<T> {
+  task: () => Promise<T>,
+  deferredPromise: DeferredPromise<T>
+}
+
+export class TaskQueue<T> {
+  private _queue: (QueueItem<T> | undefined)[];
+  private _queueIsRunning: boolean;
+  private _queueFinished: DeferredPromise<void>;
+
+  constructor() {
+    this._queue = [];
+    this._queueIsRunning = false;
+    this._queueFinished = new DeferredPromise<void>();
+  }
+
+  private async _execute() {
+    const top = this._queue[0];
+    if (!top) {
+      this._queueIsRunning = false;
+      this._queueFinished.resolve();
+      return;
+    }
+    const { task, deferredPromise } = top;
+    this._queue = this._queue.slice(1);
+    try {
+      const value = await task();
+      deferredPromise.resolve(value);
+    } catch (e) {
+      deferredPromise.reject(e);
+    }
+    this._execute();
+  }
+
+  async execute() {
+    if (!this._queueIsRunning) {
+      this._queueFinished = new DeferredPromise<void>();
+      this._queueIsRunning = true;
+      this._execute();
+    }
+    return this._queueFinished;
+  }
+
+  add(task: () => Promise<T>) {
+    const deferredPromise = new DeferredPromise<T>();
+    this._queue.push({
+      task,
+      deferredPromise
+    });
+
+    return deferredPromise as Promise<T>;
+  }
+}

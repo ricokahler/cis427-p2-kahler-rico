@@ -1,4 +1,4 @@
-import { Observable } from 'rxjs';
+import { Observable, Observer } from 'rxjs';
 import { AckSegment, DataSegment } from './';
 
 export interface ReceiverOptions {
@@ -47,9 +47,6 @@ export function createMessageStream(options: ReceiverOptions) {
       .filter(value => value.messageId !== undefined)
       .groupBy(value => value.messageId)
       .subscribe(segmentsByMessage => {
-        segmentsByMessage.subscribe(segment => {
-          console.log('got segment')
-        })
         let receivedLast = false;
         const receivedDataSegments = [] as (DataSegment | undefined)[];
         segmentsByMessage.subscribe(async segment => {
