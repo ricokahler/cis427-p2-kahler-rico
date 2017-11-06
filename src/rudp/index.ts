@@ -10,8 +10,8 @@ import {
   serializeHandshakeSegment, timer, TaskQueue
 } from './util';
 
-import { createMessageStream } from './create-message-stream';
-import { sendMessageWithWindow } from './send-message-with-window';
+import { createReceiver } from './create-message-stream';
+import { createSender } from './send-message-with-window';
 
 const DEFAULT_SEGMENT_SIZE = 4;
 const DEFAULT_SEGMENT_TIMEOUT = 1000;
@@ -143,7 +143,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             async function sendAckSegment(ackSegment: AckSegment) {
               sendRawSegmentToClient(serializeAckSegment(ackSegment));
             }
-            const messageStream = createMessageStream({
+            const messageStream = createReceiver({
               dataSegmentStream,
               sendAckSegment,
               segmentSizeInBytes,
@@ -163,7 +163,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             }
             const messageQueue = new TaskQueue<void>();
             async function sendMessage(message: string | Buffer) {
-              const promise = messageQueue.add(() => sendMessageWithWindow(message, {
+              const promise = messageQueue.add(() => createSender(message, {
                 ackSegmentStream,
                 sendDataSegment,
                 windowSize,
@@ -272,7 +272,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   async function sendAckSegment(ackSegment: AckSegment) {
     await sendRawSegmentToServer(serializeAckSegment(ackSegment));
   }
-  const messageStream = createMessageStream({
+  const messageStream = createReceiver({
     dataSegmentStream,
     sendAckSegment,
     segmentSizeInBytes,
@@ -292,7 +292,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   }
   const messageQueue = new TaskQueue<void>();
   async function sendMessage(message: string | Buffer) {
-    const promise = messageQueue.add(() => sendMessageWithWindow(message, {
+    const promise = messageQueue.add(() => createSender(message, {
       ackSegmentStream,
       sendDataSegment,
       windowSize,

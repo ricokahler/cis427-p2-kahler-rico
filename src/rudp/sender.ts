@@ -15,7 +15,7 @@ export interface SenderOptions {
   logger?: (logMessage: string) => void,
 }
 
-export function sendMessageWithWindow(message: string | Buffer, options: SenderOptions) {
+export function createSender(message: string | Buffer, options: SenderOptions) {
   const {
     sendDataSegment,
     ackSegmentStream,

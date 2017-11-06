@@ -43,7 +43,7 @@ export function findNextSequenceNumber(
  * sending acknowledgements
  * @param options 
  */
-export function createMessageStream(options: ReceiverOptions) {
+export function createReceiver(options: ReceiverOptions) {
   const { segmentSizeInBytes, dataSegmentStream, sendAckSegment } = options;
   const log = options.logger || ((logMessage: string) => { /* do nothing */ });
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
@@ -66,7 +66,7 @@ export function createMessageStream(options: ReceiverOptions) {
           const lastBuffer = receivedDataSegments[receivedDataSegments.length - 1];
 
           if (!lastBuffer) {
-            throw new Error(`lastBuffer in 'createMessageStream' was undefined`);
+            throw new Error(`lastBuffer in 'createReceiver' was undefined`);
           }
 
           if (
