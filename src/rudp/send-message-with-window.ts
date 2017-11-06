@@ -4,6 +4,8 @@ import { range } from 'lodash';
 import { DeferredPromise } from './util';
 import { DataSegment, AckSegment } from './';
 
+const LOGGER_PREFIX = '[SENDER]: '
+
 export interface SenderOptions {
   sendDataSegment: (segment: DataSegment) => Promise<void>,
   ackSegmentStream: Observable<AckSegment>,
@@ -21,16 +23,15 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
     segmentSizeInBytes,
     segmentTimeout,
   } = options;
-  const log = options.logger || ((logMessage: string) => { /* do nothing */ })
+  const log = options.logger || ((logMessage: string) => { /* do nothing */ });
+
+  log(`${LOGGER_PREFIX}sending message: "${message}".`)
+
   const id = uuid();
-
   const segmentStreamForThisMessage = ackSegmentStream.filter(segment => segment.messageId === id);
-
   const ackCounts = [] as number[];
-
   const buffer = /*if*/ typeof message === 'string' ? Buffer.from(message) : message;
   const totalSegments = Math.ceil(buffer.byteLength / segmentSizeInBytes);
-
   const dataSegments = (range(totalSegments)
     .map(i => i * segmentSizeInBytes)
     .map(seq => ({
@@ -54,7 +55,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
     data: new Buffer(''),
   });
 
-  log(`SEGMENTS TO SEND:\n${dataSegments.map(segment => `    ${JSON.stringify(segment)}`).join('\n')}`);
+  log(`${LOGGER_PREFIX}SEGMENTS TO SEND:\n${dataSegments.map(segment => `    ${JSON.stringify(segment)}`).join('\n')}`);
 
   // fast re-transmit
   segmentStreamForThisMessage.subscribe(async ackSegment => {
@@ -64,6 +65,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
     );
 
     if (ackCounts[ackSegment.ack] >= 3) {
+      log(`${LOGGER_PREFIX}FAST RE-TRANSMIT: got more than three ACKs for segment ${ackSegment.ack}`);
       const segmentToRetransmit = dataSegments[Math.floor(ackSegment.ack / segmentSizeInBytes)];
       // throw new Error()
       if (segmentToRetransmit) {
@@ -110,6 +112,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
       if (greatestAck > buffer.byteLength) {
         // when the greatest ack is larger than the bufferLength, we know we've sent every segment
         // got received acknowledgement.
+        log(`${LOGGER_PREFIX}finished sending message: "${message}"!`);
         finished.resolve();
       }
       return;

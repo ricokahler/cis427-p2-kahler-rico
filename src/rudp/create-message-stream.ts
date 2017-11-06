@@ -1,6 +1,8 @@
 import { Observable, Observer } from 'rxjs';
 import { AckSegment, DataSegment } from './';
 
+const LOGGER_PREFIX = '[RECEIVER]: '
+
 export interface ReceiverOptions {
   sendAckSegment: (segment: AckSegment) => Promise<void>,
   dataSegmentStream: Observable<DataSegment>,
@@ -43,7 +45,7 @@ export function findNextSequenceNumber(
  */
 export function createMessageStream(options: ReceiverOptions) {
   const { segmentSizeInBytes, dataSegmentStream, sendAckSegment } = options;
-  const log = options.logger || ((logMessage: string) => { /* do nothing */ })
+  const log = options.logger || ((logMessage: string) => { /* do nothing */ });
   const messageStream: Observable<Buffer> = Observable.create((observer: Observer<Buffer>) => {
     (dataSegmentStream
       .filter(value => value.messageId !== undefined)
