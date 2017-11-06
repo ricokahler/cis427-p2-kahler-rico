@@ -1,6 +1,6 @@
 import { createReliableUdpServer } from '../rudp';
 
-const rudpServer = createReliableUdpServer();
+const rudpServer = createReliableUdpServer({ logger: console.log.bind(console) });
 
 rudpServer.connectionStream.subscribe(async connection => {
   console.log('client connected! ', connection.info);

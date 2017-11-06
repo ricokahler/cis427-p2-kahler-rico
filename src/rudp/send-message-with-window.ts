@@ -10,6 +10,7 @@ export interface SenderOptions {
   segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
+  logger?: (logMessage: string) => void,
 }
 
 export function sendMessageWithWindow(message: string | Buffer, options: SenderOptions) {
@@ -20,6 +21,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
     segmentSizeInBytes,
     segmentTimeout,
   } = options;
+  const log = options.logger || ((logMessage: string) => { /* do nothing */ })
   const id = uuid();
 
   const segmentStreamForThisMessage = ackSegmentStream.filter(segment => segment.messageId === id);
@@ -52,7 +54,7 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
     data: new Buffer(''),
   });
 
-  console.log('SEGMENTS TO SEND', dataSegments);
+  log(`SEGMENTS TO SEND:\n${dataSegments.map(segment => `    ${JSON.stringify(segment)}`).join('\n')}`);
 
   // fast re-transmit
   segmentStreamForThisMessage.subscribe(async ackSegment => {

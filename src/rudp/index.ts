@@ -101,7 +101,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
        * sends a raw segment over UDP
        */
       function sendRawSegmentToClient(segment: string | Buffer) {
-        console.log('OUT:', segment.toString());
+        log(`OUT: ${segment.toString()}`);
         return new Promise<number>((resolve, reject) => {
           server.send(segment, info.port, info.address, (error, bytes) => {
             if (error) {
@@ -147,6 +147,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
               dataSegmentStream,
               sendAckSegment,
               segmentSizeInBytes,
+              logger: log,
             });
 
             // send message with window
@@ -168,6 +169,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
                 windowSize,
                 segmentTimeout,
                 segmentSizeInBytes,
+                logger: log,
               }));
               messageQueue.execute();
               return promise;
@@ -204,13 +206,14 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
   const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT;
   const connectionTimeout = rudpOptions.connectionTimeout || DEFAULT_CONNECTION_TIMEOUT;
+  const log = rudpOptions.logger || ((logMessage: string) => {/* do nothing */ })
 
   if (!address) {
     throw new Error(`Could not resolve hostname: "${rudpOptions.hostname}"`)
   }
 
   function sendRawSegmentToServer(message: Buffer | string) {
-    console.log('OUT:', message.toString());
+    log(`OUT: ${message.toString()}`);
     return new Promise<number>((resolve, reject) => {
       client.send(message, port, address, (error, bytes) => {
         if (error) {
@@ -228,7 +231,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
       observer.next({ raw, info });
     });
   }) as Observable<RawSegment>;
-  rawSegmentStream.subscribe(({ raw }) => console.log('IN : ' + raw.toString()))
+  rawSegmentStream.subscribe(({ raw }) => log(`IN : ${raw.toString()}`))
   const rawSegmentStreamFromServer = rawSegmentStream.filter(({ info }) => {
     return info.address === address && info.port === port
   });
@@ -273,6 +276,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     dataSegmentStream,
     sendAckSegment,
     segmentSizeInBytes,
+    logger: log,
   });
 
   // send message function
@@ -294,6 +298,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
       windowSize,
       segmentTimeout,
       segmentSizeInBytes,
+      logger: log,
     }));
     messageQueue.execute();
     return promise;
