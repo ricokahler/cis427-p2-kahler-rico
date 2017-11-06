@@ -6,10 +6,11 @@ import { range } from 'lodash';
 import TaskQueue, { DeferredPromise } from './task-queue';
 
 const DEFAULT_SEGMENT_SIZE = 4;
-const DEFAULT_SEGMENT_TIMEOUT = 10000;
+const DEFAULT_SEGMENT_TIMEOUT = 1000;
 const DEFAULT_PORT = 8090;
 const DEFAULT_HOST = 'localhost';
 const DEFAULT_WINDOW_SIZE = 5;
+const DEFAULT_CONNECTION_TIMEOUT = 3000;
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,
@@ -35,6 +36,7 @@ export interface ReliableUdpClientOptions {
   segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
+  connectionTimeout: number,
 }
 
 export interface SenderOptions {
@@ -52,6 +54,7 @@ export interface ReceiverOptions {
 }
 
 export interface HandshakeSegment {
+  clientId: string,
   handshake: 'syn' | 'syn-ack' | 'ack',
 }
 
@@ -140,8 +143,8 @@ function parseAckSegment(ackSegmentString: string) {
 }
 
 function isAckSegment(maybe: any): maybe is AckSegment {
-  if (!maybe) { return false; }
   const maybeAsAckSegment = maybe as AckSegment;
+  if (!maybeAsAckSegment) { return false; }
   if (maybeAsAckSegment.ack === undefined) { return false; }
   if (maybeAsAckSegment.messageId === undefined) { return false; }
   return true;
@@ -163,19 +166,15 @@ function parseHandshakeSegment(handshakeSegmentString: string) {
 }
 
 function isHandshakeSegment(maybe: any): maybe is HandshakeSegment {
-  if (!maybe) {
-    return false;
-  }
   const maybeAsHandshakeSegment = maybe as HandshakeSegment;
-  if (!maybeAsHandshakeSegment)
-    if ((maybe as HandshakeSegment).handshake) {
-      return true;
-    }
-  return false;
+  if (!maybeAsHandshakeSegment) { return false }
+  if (maybeAsHandshakeSegment.clientId === undefined) { return false; }
+  if (maybeAsHandshakeSegment.handshake === undefined) { return false; }
+  return true;
 }
 
-function wait(milliseconds: number) {
-  return new Promise(resolve => setTimeout(() => resolve(), milliseconds));
+function timer(milliseconds: number) {
+  return new Promise<'timer'>(resolve => setTimeout(() => resolve('timer'), milliseconds));
 }
 
 function resolveName(hostname: string) {
@@ -232,7 +231,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
         })
       }
 
-      const handshakeSegmentStream = (rawSegmentStreamOfOneClient
+      const handshakeSegmentStreamPerClient = (rawSegmentStreamOfOneClient
         .filter(({ raw }) => {
           try {
             return isHandshakeSegment(JSON.parse(raw.toString()))
@@ -241,34 +240,38 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
           }
         })
         .map(({ raw }) => parseHandshakeSegment(raw.toString()))
+        .groupBy(({ clientId }) => clientId)
       );
 
-      handshakeSegmentStream.subscribe(({ handshake }) => {
-        if (handshake === 'syn') {
-          const synAckHandshake: HandshakeSegment = { handshake: 'syn-ack' };
-          sendRawSegmentToClient(JSON.stringify(synAckHandshake));
-        } else if (handshake === 'ack') {
-          connectionObserver.next(createConnectionToClient({
-            sendDataSegment: async (dataSegment: DataSegment) => new Promise<void>(async (resolve, reject) => {
-              // await wait(5000);
-              await sendRawSegmentToClient(serializeDataSegment(dataSegment));
-            }),
-            ackSegmentStream: (rawSegmentStreamOfOneClient
-              .filter(({ raw }) => {
-                try {
-                  isAckSegment(JSON.parse(raw.toString()))
-                } catch {
-                  return false;
-                }
-                return false;
-              })
-              .map(({ raw }) => parseAckSegment(raw.toString()))
-            ),
-            segmentSizeInBytes: maxSegmentSizeInBytes,
-            windowSize,
-            segmentTimeout,
-          }, info));
-        }
+      handshakeSegmentStreamPerClient.subscribe(handshakeSegmentStreamOfOneClient => {
+        const clientId = handshakeSegmentStreamOfOneClient.key;
+        handshakeSegmentStreamOfOneClient.subscribe(handshakeSegment => {
+          if (handshakeSegment.handshake === 'syn') {
+            sendRawSegmentToClient(serializeHandshakeSegment({
+              clientId: handshakeSegment.clientId,
+              handshake: 'syn-ack',
+            }));
+          } else if (handshakeSegment.handshake === 'ack') {
+            connectionObserver.next(createConnectionToClient({
+              sendDataSegment: async (dataSegment: DataSegment) => {
+                await sendRawSegmentToClient(serializeDataSegment(dataSegment))
+              },
+              ackSegmentStream: (rawSegmentStreamOfOneClient
+                .filter(({ raw }) => {
+                  try {
+                    return isAckSegment(JSON.parse(raw.toString()))
+                  } catch {
+                    return false;
+                  }
+                })
+                .map(({ raw }) => parseAckSegment(raw.toString()))
+              ),
+              segmentSizeInBytes: maxSegmentSizeInBytes,
+              windowSize,
+              segmentTimeout,
+            }, info));
+          }
+        });
       });
     });
   });
@@ -289,7 +292,8 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const port = rudpOptions.port || DEFAULT_PORT;
   const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
   const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
-  const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT
+  const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT;
+  const connectionTimeout = rudpOptions.connectionTimeout || DEFAULT_CONNECTION_TIMEOUT;
 
   if (!address) {
     throw new Error(`Could not resolve hostname: "${rudpOptions.hostname}"`)
@@ -307,48 +311,76 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     });
   }
 
-  const socketStream = Observable.create((observer: Observer<RawSegment>) => {
-    client.addListener('message', (message, serverInfo) => {
-      observer.next({ raw, info: serverInfo });
+  const clientId = uuid();
+  const rawSegmentStream = Observable.create((observer: Observer<RawSegment>) => {
+    client.addListener('message', (raw, info) => {
+      observer.next({ raw, info });
     });
   }) as Observable<RawSegment>;
-
-  // rawSegmentStream.subscribe(rawSegment => console.log('RAW MESSAGE: ', rawSegment.message.toString()));
-
-  // initiate the handshake
-  console.log('sending SYNC...')
-  await sendRawSegmentToServer('__HANDSHAKE__SYN');
-  // wait for the SYN-ACK
-  await socketStream.filter(({ raw }) => raw.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
-  console.log('got SYN-ACK. sending ACK...')
-  // send the ACK
-  await sendRawSegmentToServer('__HANDSHAKE__ACK');
-
-  // connection established here
-  const segmentStream = (socketStream
-    .filter(({ info }) => info.address === address && info.port === port)
-    .map(({ raw }) => raw.toString())
-    .map(stringToSegment)
+  const rawSegmentStreamFromServer = rawSegmentStream.filter(({ info }) => {
+    return info.address === address && info.port === port
+  });
+  const handshakeStreamForThisClient = (rawSegmentStreamFromServer
+    .filter(({ raw }) => {
+      try {
+        return isHandshakeSegment(JSON.parse(raw.toString()));
+      } catch {
+        return false;
+      }
+    })
+    .map(({ raw }) => parseHandshakeSegment(raw.toString()))
+    .filter(handshakeSegment => handshakeSegment.clientId === clientId)
   );
 
-  function sendSegment(segment: Segment) {
-    return new Promise<void>((resolve, reject) => {
-      if (!segment) {
-        throw new Error(`Could not send segment because because it was ${segment}`);
-      }
-      const segmentAsString = segmentToString(segment);
-      client.send(segmentAsString, port, address, (error, bytes) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      })
-    });
+  await sendRawSegmentToServer(serializeHandshakeSegment({ clientId, handshake: 'syn' }));
+
+  const synAck = (handshakeStreamForThisClient
+    .filter(({ handshake }) => handshake === 'syn-ack')
+    .take(1)
+    .toPromise()
+  );
+
+  const synAckOrTimer = await Promise.race([
+    synAck,
+    timer(connectionTimeout)
+  ]);
+
+  if (synAckOrTimer === 'timer') {
+    throw new Error('connection to server timed out');
+  }
+
+  await sendRawSegmentToServer(serializeHandshakeSegment({ clientId, handshake: 'ack' }));
+
+  const dataSegmentStream = (rawSegmentStreamFromServer
+    .filter(({ raw }) => {
+      try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
+      catch { return false; }
+    })
+    .map(({ raw }) => parseDataSegment(raw.toString()))
+  );
+
+  const ackSegmentStream = (rawSegmentStreamFromServer
+    .filter(({ raw }) => {
+      try { return isAckSegment(JSON.parse(raw.toString())) }
+      catch { return false; }
+    })
+    .map(({ raw }) => parseAckSegment(raw.toString()))
+  );
+
+  async function sendAckSegment(ackSegment: AckSegment) {
+    await sendRawSegmentToServer(serializeAckSegment(ackSegment));
+  }
+
+  async function sendDataSegment(dataSegment: DataSegment) {
+    await sendRawSegmentToServer(serializeDataSegment(dataSegment));
   }
 
   const reliableUdpSocket: ReliableUdpSocket = {
-    messageStream: createMessageStream({ dataSegmentStream, sendAckSegment, segmentSizeInBytes }),
+    messageStream: createMessageStream({
+      dataSegmentStream,
+      sendAckSegment,
+      segmentSizeInBytes
+    }),
     sendMessage: (message: string | Buffer) => sendMessageWithWindow(message, {
       segmentSizeInBytes,
       ackSegmentStream,
