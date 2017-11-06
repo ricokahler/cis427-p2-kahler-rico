@@ -367,22 +367,31 @@ export function createMessageStream(options: ReceiverOptions) {
       .groupBy(value => value.messageId)
       .subscribe(segmentsByMessage => {
         let receivedLast = false;
-        const buffers = [] as (Segment | undefined)[];
+        const receivedDataSegments = [] as (DataSegment | undefined)[];
         segmentsByMessage.subscribe(async segment => {
-          buffers[Math.floor(segment.seqAck / segmentSizeInBytes)] = segment;
-          const nextExpectedSequenceNumber = findNextSequenceNumber(buffers, segmentSizeInBytes);
+          receivedDataSegments[Math.floor(segment.seq / segmentSizeInBytes)] = segment;
+          const nextExpectedSequenceNumber = findNextSequenceNumber(
+            receivedDataSegments,
+            segmentSizeInBytes
+          );
 
           if (segment.last) {
             receivedLast = true;
           }
-          const lastBuffer = buffers[buffers.length - 1];
+          const lastBuffer = receivedDataSegments[receivedDataSegments.length - 1];
+
+          if (!lastBuffer) {
+            throw new Error(`lastBuffer in 'createMessageStream' was undefined`);
+          }
 
           if (
+            // we got a segment that included the `"last": true` field
             receivedLast
-            && lastBuffer
-            && nextExpectedSequenceNumber === lastBuffer.seqAck + segmentSizeInBytes
+            // and the next expected sequence number is equal to the last received segment's next
+            // expected sequence number
+            && nextExpectedSequenceNumber === lastBuffer.seq + segmentSizeInBytes
           ) {
-            const combinedBuffer = Buffzer.concat(buffers.filter(x => x).map(buffer => {
+            const combinedBuffer = Buffer.concat(receivedDataSegments.filter(x => x).map(buffer => {
               if (!buffer) {
                 throw new Error(`Could not concatenate buffer because it was ${buffer}.`);
               }
@@ -394,7 +403,7 @@ export function createMessageStream(options: ReceiverOptions) {
           // ack
           await sendSegment({
             messageId: segment.messageId,
-            seqAck: nextExpectedSequenceNumber,
+            ack: nextExpectedSequenceNumber,
           });
         })
       })
@@ -403,26 +412,32 @@ export function createMessageStream(options: ReceiverOptions) {
   return messageStream as Observable<Buffer>;
 }
 
+/**
+ * Given an array of data segments, this function will find the next expected data segment
+ * if a buffer is missing. runs in O(n) unfortunately.
+ * @param dataSegments 
+ * @param segmentSizeInBytes 
+ */
 export function findNextSequenceNumber(
-  buffers: ({ seqAck: number } | undefined)[],
+  dataSegments: (DataSegment | undefined)[],
   segmentSizeInBytes: number
 ) {
-  if (buffers.length === 0) {
+  if (dataSegments.length === 0) {
     return segmentSizeInBytes;
   }
   let i = 0;
-  for (let buffer of buffers) {
+  for (let buffer of dataSegments) {
     if (!buffer) {
       return i * segmentSizeInBytes;
     }
     i += 1;
   }
-  const lastBuffer = buffers[buffers.length - 1];
+  const lastBuffer = dataSegments[dataSegments.length - 1];
   if (!lastBuffer) {
     // should never happen
     throw new Error('last buffer was undefined');
   }
-  return lastBuffer.seqAck + segmentSizeInBytes;
+  return lastBuffer.seq + segmentSizeInBytes;
 }
 
 export function sendMessageWithWindow(message: string | Buffer, options: SenderOptions) {

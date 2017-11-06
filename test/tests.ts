@@ -7,48 +7,48 @@ import { Observable, Observer, ReplaySubject } from 'rxjs';
 
 import { DeferredPromise } from '../src/rudp/task-queue';
 import {
-  findNextSequenceNumber, createMessageStream,
+  DataSegment, AckSegment, findNextSequenceNumber, createMessageStream,
   sendMessageWithWindow
 } from '../src/rudp';
 
 describe('findNextSequenceNumber', function () {
   it('finds the next sequence number from the middle', function () {
-    const buffers = [
-      { seqAck: 0 },
+    const dataSegments = [
+      { seq: 0 },
       undefined, // { seqAck: 100 }, // this one is missing
-      { seqAck: 200 },
+      { seq: 200 },
       undefined, // { seqAck: 300 }, // this one is also missing
-      { seqAck: 400 },
-      { seqAck: 500 },
-    ];
+      { seq: 400 },
+      { seq: 500 },
+    ] as DataSegment[];
 
-    expect(findNextSequenceNumber(buffers, 100)).to.be.equal(100);
+    expect(findNextSequenceNumber(dataSegments, 100)).to.be.equal(100);
   });
 
   it('finds the next sequence number from the start', function () {
-    const buffers = [
+    const dataSegments = [
       undefined,
-      { seqAck: 100 },
-      { seqAck: 200 },
+      { seq: 100 },
+      { seq: 200 },
       undefined, // { seqAck: 300 }, // this one is missing
-      { seqAck: 400 },
-      { seqAck: 500 },
-    ];
+      { seq: 400 },
+      { seq: 500 },
+    ] as DataSegment[];
 
-    expect(findNextSequenceNumber(buffers, 100)).to.be.equal(0);
+    expect(findNextSequenceNumber(dataSegments, 100)).to.be.equal(0);
   });
 
   it('finds the next sequence number at the end', function () {
-    const buffers = [
-      { seqAck: 0 },
-      { seqAck: 100 },
-      { seqAck: 200 },
-      { seqAck: 300 }, // this one is missing
-      { seqAck: 400 },
-      { seqAck: 500 },
-    ];
+    const dataSegments = [
+      { seq: 0 },
+      { seq: 100 },
+      { seq: 200 },
+      { seq: 300 }, // this one is missing
+      { seq: 400 },
+      { seq: 500 },
+    ] as DataSegment[];
 
-    expect(findNextSequenceNumber(buffers, 100)).to.be.equal(600);
+    expect(findNextSequenceNumber(dataSegments, 100)).to.be.equal(600);
   });
 });
 
