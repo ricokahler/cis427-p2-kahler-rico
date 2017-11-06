@@ -7,7 +7,7 @@ import { Observable, Observer, ReplaySubject } from 'rxjs';
 
 import { DeferredPromise } from '../src/rudp/task-queue';
 import {
-  Segment, findNextSequenceNumber, segmentToString, stringToSegment, createMessageStream,
+  findNextSequenceNumber, createMessageStream,
   sendMessageWithWindow
 } from '../src/rudp';
 
@@ -50,31 +50,6 @@ describe('findNextSequenceNumber', function () {
 
     expect(findNextSequenceNumber(buffers, 100)).to.be.equal(600);
   });
-})
-
-describe('stringToSegment, segmentToString', function () {
-  it('converts to and from strings', function () {
-    const segment: Segment = {
-      messageId: uuid(),
-      seqAck: Math.floor(Math.random() * 5) * 100,
-      data: new Buffer(uuid()),
-      last: Math.random() > 0.5,
-      handshake: 'SYN',
-    };
-
-    expect(stringToSegment(segmentToString(segment))).to.be.deep.equal(segment);
-  });
-
-  it('leaves out keys when undefined', function () {
-    const segment: Segment = {
-      messageId: uuid(),
-      seqAck: Math.floor(Math.random() * 5) * 100,
-      // data: new Buffer(uuid()), // leave this out
-      // last: Math.random() > 0.5
-    };
-
-    expect(stringToSegment(segmentToString(segment))).to.be.deep.equal(segment);
-  })
 });
 
 describe('createMessageStream', function () {

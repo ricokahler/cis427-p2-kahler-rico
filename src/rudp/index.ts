@@ -63,7 +63,8 @@ export interface AckSegment {
 export interface DataSegment {
   messageId: string,
   seq: number,
-  data?: string,
+  data: Buffer,
+  last?: true,
 }
 
 export interface BufferWithInfo {
@@ -79,27 +80,75 @@ function createSocketId(info: Udp.AddressInfo) {
   return info.address + '__' + info.family + '__' + info.port;
 }
 
-export function segmentToString(segment: Segment) {
-  if (!segment) {
-    throw new Error (`Could not convert segment to string because it was ${segment}`)
-  }
-  const { data, ...restOfSegment } = segment;
-  const dataBase64 = data && data.toString('base64');
-  const obj = { ...restOfSegment, dataBase64 }
-  return JSON.stringify(obj);
+/**
+ * converts a data segment to a JSON friendly format by encoding the buffer to base64
+ * @param dataSegment 
+ */
+function dataSegmentToJsonable(dataSegment: DataSegment) {
+  const { data, ...restOfSegment } = dataSegment;
+  const dataBase64 = data.toString('base64');
+  return { ...restOfSegment, dataBase64 };
+}
+// for dynamic typings
+const _DataSegmentJsonable = false ? dataSegmentToJsonable({} as DataSegment) : undefined;
+type DataSegmentJsonable = typeof _DataSegmentJsonable;
+
+/**
+ * Converts `DataSegment`s to strings to send over the wire.
+ * Converts Buffers to base64 and serializes the whole thing to JSON
+ * @param dataSegment segment to be converted
+ */
+export function serializeDataSegment(dataSegment: DataSegment) {
+  return JSON.stringify(dataSegmentToJsonable(dataSegment));
 }
 
-export function stringToSegment(stringSegment: string) {
-  if (!stringSegment) {
-    throw new Error(`Could not convert string to segment because string was ${stringSegment}`);
+/**
+ * Parses data segments converted with `serializeDataSegment` back to segments
+ * @param dataSegmentString the data segment string to parse
+ */
+export function parseDataSegment(dataSegmentString: string) {
+  const dataSegmentJson = JSON.parse(dataSegmentString) as DataSegmentJsonable;
+  if (!dataSegmentJson) {
+    // should never happen
+    throw new Error('dataSegmentJson was undefined');
   }
-  const { dataBase64, ...restOfParsed } = JSON.parse(stringSegment);
-  const data = dataBase64 !== undefined ? new Buffer(dataBase64, 'base64') : undefined;
-  const newSegment = { ...restOfParsed } as Segment;
-  if (data) {
-    newSegment.data = data;
-  }
-  return newSegment;
+  const { dataBase64, ...restOfDataSegment } = dataSegmentJson;
+  const data = new Buffer(dataBase64, 'base64');
+  const segment: DataSegment = {
+    data,
+    ...restOfDataSegment
+  };
+  return segment;
+}
+
+/**
+ * one-line function that applies `JSON.stringify` to an `AckSegment` to convert it to a string.
+ * Unlike the `DataSegment`, the `AckSegment` is already JSON friendly. 
+ */
+export function serializeAckSegment(ackSegment: AckSegment) {
+  return JSON.stringify(ackSegment);
+}
+
+/**
+ * one-line function that applies `JSON.parse` and asserts the type to be an `AckSegment`
+ */
+export function parseAckSegment(ackSegmentString: string) {
+  return JSON.parse(ackSegmentString) as AckSegment;
+}
+
+/**
+ * one-line function that applies `JSON.stringify` to an `HandshakeSegment` to convert it to a
+ * string. Unlike the `DataSegment`, the `HandshakeSegment` is already JSON friendly. 
+ */
+export function serializeHandshakeSegment(handshakeSegment: HandshakeSegment) {
+  return JSON.stringify(handshakeSegment);
+}
+
+/**
+ * one-line function that applies `JSON.parse` and asserts the type to be an `HandshakeSegment`
+ */
+export function parseHandshakeSegment(handshakeSegmentString: string) {
+  return JSON.parse(handshakeSegmentString) as HandshakeSegment;
 }
 
 function wait(milliseconds: number) {
@@ -262,7 +311,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   function sendSegment(segment: Segment) {
     return new Promise<void>((resolve, reject) => {
       if (!segment) {
-        throw new Error (`Could not send segment because because it was ${segment}`);
+        throw new Error(`Could not send segment because because it was ${segment}`);
       }
       const segmentAsString = segmentToString(segment);
       client.send(segmentAsString, port, address, (error, bytes) => {
