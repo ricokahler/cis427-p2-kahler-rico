@@ -205,9 +205,9 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
     server.on('message', (raw, info) => observer.next({ raw, info }));
   }) as Observable<RawSegment>;
 
-  // rawSegmentStream.subscribe(({ message }) => {
-  //   console.log('RAW MESSAGE:', message.toString());
-  // })
+  rawSegmentStream.subscribe(({ raw }) => {
+    console.log('IN :', raw.toString());
+  })
 
   const connectionStream = Observable.create((connectionObserver: Observer<ReliableUdpSocket>) => {
     // group each segment by their socket info
@@ -220,6 +220,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
        * sends a raw segment over UDP
        */
       function sendRawSegmentToClient(segment: string | Buffer) {
+        console.log('OUT:', segment.toString());
         return new Promise<number>((resolve, reject) => {
           server.send(segment, info.port, info.address, (error, bytes) => {
             if (error) {
@@ -253,10 +254,14 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             }));
           } else if (handshakeSegment.handshake === 'ack') {
 
+            rawSegmentStreamOfOneClient.subscribe(a => {
+              console.log({a})
+            })
+
             // message stream
-            const dataSegmentStream = rawSegmentStreamOfOneClient.filter(({ raw }) => {
+            const dataSegmentStream = rawSegmentStream.filter(({ raw }) => {
               try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
-              catch { return false; }
+              catch { console.warn('caught'); return false; }
             }).map(({ raw }) => parseDataSegment(raw.toString()));
             async function sendAckSegment(ackSegment: AckSegment) {
               sendRawSegmentToClient(serializeAckSegment(ackSegment));
@@ -268,10 +273,10 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             });
 
             // send message with window
-            const ackSegmentStream = (rawSegmentStreamOfOneClient
+            const ackSegmentStream = (rawSegmentStream
               .filter(({ raw }) => {
                 try { return isAckSegment(JSON.parse(raw.toString())) }
-                catch { return false; }
+                catch { console.warn('caught'); return false; }
               })
               .map(({ raw }) => parseAckSegment(raw.toString()))
             );
@@ -324,6 +329,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   }
 
   function sendRawSegmentToServer(message: Buffer | string) {
+    console.log('OUT:', message.toString());
     return new Promise<number>((resolve, reject) => {
       client.send(message, port, address, (error, bytes) => {
         if (error) {
@@ -341,16 +347,14 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
       observer.next({ raw, info });
     });
   }) as Observable<RawSegment>;
+  rawSegmentStream.subscribe(({ raw }) => console.log('IN : ' + raw.toString()))
   const rawSegmentStreamFromServer = rawSegmentStream.filter(({ info }) => {
     return info.address === address && info.port === port
   });
   const handshakeStreamForThisClient = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
-      try {
-        return isHandshakeSegment(JSON.parse(raw.toString()));
-      } catch {
-        return false;
-      }
+      try { return isHandshakeSegment(JSON.parse(raw.toString())); }
+      catch { console.warn('caught'); return false; }
     })
     .map(({ raw }) => parseHandshakeSegment(raw.toString()))
     .filter(handshakeSegment => handshakeSegment.clientId === clientId)
@@ -363,12 +367,10 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     .take(1)
     .toPromise()
   );
-
   const synAckOrTimer = await Promise.race([
     synAck,
     timer(connectionTimeout)
   ]);
-
   if (synAckOrTimer === 'timer') {
     throw new Error('connection to server timed out');
   }
@@ -379,7 +381,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const dataSegmentStream = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
-      catch { return false; }
+      catch { console.warn('caught'); return false; }
     })
     .map(({ raw }) => parseDataSegment(raw.toString()))
   );
@@ -389,14 +391,14 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const messageStream = createMessageStream({
     dataSegmentStream,
     sendAckSegment,
-    segmentSizeInBytes
+    segmentSizeInBytes,
   });
 
   // send message function
   const ackSegmentStream = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isAckSegment(JSON.parse(raw.toString())) }
-      catch { return false; }
+      catch { console.warn('caught'); return false; }
     })
     .map(({ raw }) => parseAckSegment(raw.toString()))
   );
@@ -422,23 +424,6 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   return reliableUdpSocket;
 }
 
-// export function createConnectionToClient(options: SenderOptions, info: Udp.AddressInfo) {
-
-//   function sendMessage(message: string | Buffer) {
-//     return sendMessageWithWindow(message, options);
-//   }
-
-//   const socket: ReliableUdpSocket = {
-//     info,
-//     messageStream: createMessageStream({
-
-//     }),
-//     sendMessage
-//   };
-
-//   return socket;
-// }
-
 /**
  * consumes the `segmentStream` with sequence numbers and omits a stream of completed messages
  * sending acknowledgements
@@ -451,6 +436,9 @@ export function createMessageStream(options: ReceiverOptions) {
       .filter(value => value.messageId !== undefined)
       .groupBy(value => value.messageId)
       .subscribe(segmentsByMessage => {
+        segmentsByMessage.subscribe(segment => {
+          console.log('got segment')
+        })
         let receivedLast = false;
         const receivedDataSegments = [] as (DataSegment | undefined)[];
         segmentsByMessage.subscribe(async segment => {
@@ -487,8 +475,8 @@ export function createMessageStream(options: ReceiverOptions) {
 
           // ack
           await sendAckSegment({
-            messageId: segment.messageId,
             ack: nextExpectedSequenceNumber,
+            messageId: segment.messageId,
           });
         })
       })
@@ -505,7 +493,7 @@ export function createMessageStream(options: ReceiverOptions) {
  */
 export function findNextSequenceNumber(
   dataSegments: (DataSegment | undefined)[],
-  segmentSizeInBytes: number
+  segmentSizeInBytes: number,
 ) {
   if (dataSegments.length === 0) {
     return segmentSizeInBytes;
@@ -559,13 +547,13 @@ export function sendMessageWithWindow(message: string | Buffer, options: SenderO
   );
   // push last empty segment
   dataSegments.push({
-    messageId: id,
     seq: totalSegments * segmentSizeInBytes,
+    messageId: id,
     last: true,
     data: new Buffer(''),
   });
 
-  // console.log('SEGMENTS TO SEND', segments);
+  console.log('SEGMENTS TO SEND', dataSegments);
 
   // fast re-transmit
   segmentStreamForThisMessage.subscribe(async ackSegment => {
