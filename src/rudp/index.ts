@@ -67,17 +67,9 @@ export interface DataSegment {
   last?: true,
 }
 
-export interface BufferWithInfo {
-  message: Buffer,
-  info: Udp.AddressInfo
-}
-
-/**
- * creates an identifer string by concatenating information in the `info`
- * @param info 
- */
-function createSocketId(info: Udp.AddressInfo) {
-  return info.address + '__' + info.family + '__' + info.port;
+export interface RawSegment {
+  info: Udp.AddressInfo,
+  raw: Buffer,
 }
 
 /**
@@ -93,12 +85,23 @@ function dataSegmentToJsonable(dataSegment: DataSegment) {
 const _DataSegmentJsonable = false ? dataSegmentToJsonable({} as DataSegment) : undefined;
 type DataSegmentJsonable = typeof _DataSegmentJsonable;
 
+function isDataSegmentJsonable(maybe: any): maybe is DataSegmentJsonable {
+  if (!maybe) { return false; }
+  if (typeof maybe !== 'object') { return false; }
+  const maybeAsDataSegmentJsonable = (maybe as DataSegmentJsonable);
+  if (!maybeAsDataSegmentJsonable) { return false; }
+  if (maybeAsDataSegmentJsonable.dataBase64 === undefined) { return false; }
+  if (maybeAsDataSegmentJsonable.messageId === undefined) { return false; }
+  if (maybeAsDataSegmentJsonable.seq === undefined) { return false; }
+  return true;
+}
+
 /**
  * Converts `DataSegment`s to strings to send over the wire.
  * Converts Buffers to base64 and serializes the whole thing to JSON
  * @param dataSegment segment to be converted
  */
-export function serializeDataSegment(dataSegment: DataSegment) {
+function serializeDataSegment(dataSegment: DataSegment) {
   return JSON.stringify(dataSegmentToJsonable(dataSegment));
 }
 
@@ -106,7 +109,7 @@ export function serializeDataSegment(dataSegment: DataSegment) {
  * Parses data segments converted with `serializeDataSegment` back to segments
  * @param dataSegmentString the data segment string to parse
  */
-export function parseDataSegment(dataSegmentString: string) {
+function parseDataSegment(dataSegmentString: string) {
   const dataSegmentJson = JSON.parse(dataSegmentString) as DataSegmentJsonable;
   if (!dataSegmentJson) {
     // should never happen
@@ -125,30 +128,50 @@ export function parseDataSegment(dataSegmentString: string) {
  * one-line function that applies `JSON.stringify` to an `AckSegment` to convert it to a string.
  * Unlike the `DataSegment`, the `AckSegment` is already JSON friendly. 
  */
-export function serializeAckSegment(ackSegment: AckSegment) {
+function serializeAckSegment(ackSegment: AckSegment) {
   return JSON.stringify(ackSegment);
 }
 
 /**
  * one-line function that applies `JSON.parse` and asserts the type to be an `AckSegment`
  */
-export function parseAckSegment(ackSegmentString: string) {
+function parseAckSegment(ackSegmentString: string) {
   return JSON.parse(ackSegmentString) as AckSegment;
+}
+
+function isAckSegment(maybe: any): maybe is AckSegment {
+  if (!maybe) { return false; }
+  const maybeAsAckSegment = maybe as AckSegment;
+  if (maybeAsAckSegment.ack === undefined) { return false; }
+  if (maybeAsAckSegment.messageId === undefined) { return false; }
+  return true;
 }
 
 /**
  * one-line function that applies `JSON.stringify` to an `HandshakeSegment` to convert it to a
  * string. Unlike the `DataSegment`, the `HandshakeSegment` is already JSON friendly. 
  */
-export function serializeHandshakeSegment(handshakeSegment: HandshakeSegment) {
+function serializeHandshakeSegment(handshakeSegment: HandshakeSegment) {
   return JSON.stringify(handshakeSegment);
 }
 
 /**
  * one-line function that applies `JSON.parse` and asserts the type to be an `HandshakeSegment`
  */
-export function parseHandshakeSegment(handshakeSegmentString: string) {
+function parseHandshakeSegment(handshakeSegmentString: string) {
   return JSON.parse(handshakeSegmentString) as HandshakeSegment;
+}
+
+function isHandshakeSegment(maybe: any): maybe is HandshakeSegment {
+  if (!maybe) {
+    return false;
+  }
+  const maybeAsHandshakeSegment = maybe as HandshakeSegment;
+  if (!maybeAsHandshakeSegment)
+    if ((maybe as HandshakeSegment).handshake) {
+      return true;
+    }
+  return false;
 }
 
 function wait(milliseconds: number) {
@@ -175,25 +198,13 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
   const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
   const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT;
 
-  function sendSegmentTo(info: Udp.AddressInfo, message: string) {
-    return new Promise<number>((resolve, reject) => {
-      server.send(message, info.port, info.address, (error, bytes) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(bytes);
-        }
-      });
-    });
-  }
-
   server.on('listening', () => {
     console.log(`Reliable UDP Server running on port ${port}.`)
   });
 
-  const rawSegmentStream = Observable.create((observer: Observer<BufferWithInfo>) => {
-    server.on('message', (message, info) => observer.next({ message, info }));
-  }) as Observable<BufferWithInfo>;
+  const rawSegmentStream = Observable.create((observer: Observer<RawSegment>) => {
+    server.on('message', (raw, info) => observer.next({ raw, info }));
+  }) as Observable<RawSegment>;
 
   // rawSegmentStream.subscribe(({ message }) => {
   //   console.log('RAW MESSAGE:', message.toString());
@@ -201,51 +212,63 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
 
   const connectionStream = Observable.create((connectionObserver: Observer<ReliableUdpSocket>) => {
     // group each segment by their socket info
-    const segmentsGroupedByClient = rawSegmentStream.groupBy(({ info }) => createSocketId(info));
-    segmentsGroupedByClient.subscribe(segmentStreamOfOneClient => {
-      // a stream of segments that are the message of `__HANDSHAKE__SYN`
-      const synStream = segmentStreamOfOneClient.filter(({ message }) =>
-        message.toString() === '__HANDSHAKE__SYN'
-      );
-      synStream.subscribe(async ({ message, info }) => {
-        console.log('got SYN, sending SYN-ACK...');
-        await sendSegmentTo(info, '__HANDSHAKE__SYN-ACK');
-      });
+    const segmentsGroupedByClient = rawSegmentStream.groupBy(({ info }) => JSON.stringify({ ...info }));
+    segmentsGroupedByClient.subscribe(rawSegmentStreamOfOneClient => {
 
-      // a stream of message that are `__HANDSHAKE__ACK`
-      const ackStream = segmentStreamOfOneClient.filter(({ message }) =>
-        message.toString() === '__HANDSHAKE__ACK'
-      );
+      const info = JSON.parse(rawSegmentStreamOfOneClient.key) as Udp.AddressInfo;
 
-      // when the `__HANDSHAKE__ACK` message comes, we can push a new connection.
-      ackStream.subscribe(async ({ message, info }) => {
-
-        function sendRawSegment(m: string) {
-          return new Promise((resolve, reject) => {
-            server.send(m, info.port, info.address, (error, bytes) => {
-              if (error) {
-                reject(error);
-              } else {
-                resolve();
-              }
-            })
+      /**
+       * sends a raw segment over UDP
+       */
+      function sendRawSegmentToClient(segment: string | Buffer) {
+        return new Promise<number>((resolve, reject) => {
+          server.send(segment, info.port, info.address, (error, bytes) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve(bytes);
+            }
           });
+        })
+      }
+
+      const handshakeSegmentStream = (rawSegmentStreamOfOneClient
+        .filter(({ raw }) => {
+          try {
+            return isHandshakeSegment(JSON.parse(raw.toString()))
+          } catch {
+            return false;
+          }
+        })
+        .map(({ raw }) => parseHandshakeSegment(raw.toString()))
+      );
+
+      handshakeSegmentStream.subscribe(({ handshake }) => {
+        if (handshake === 'syn') {
+          const synAckHandshake: HandshakeSegment = { handshake: 'syn-ack' };
+          sendRawSegmentToClient(JSON.stringify(synAckHandshake));
+        } else if (handshake === 'ack') {
+          connectionObserver.next(createConnectionToClient({
+            sendDataSegment: async (dataSegment: DataSegment) => new Promise<void>(async (resolve, reject) => {
+              // await wait(5000);
+              await sendRawSegmentToClient(serializeDataSegment(dataSegment));
+            }),
+            ackSegmentStream: (rawSegmentStreamOfOneClient
+              .filter(({ raw }) => {
+                try {
+                  isAckSegment(JSON.parse(raw.toString()))
+                } catch {
+                  return false;
+                }
+                return false;
+              })
+              .map(({ raw }) => parseAckSegment(raw.toString()))
+            ),
+            segmentSizeInBytes: maxSegmentSizeInBytes,
+            windowSize,
+            segmentTimeout,
+          }, info));
         }
-
-        // connection established
-        console.log('got ACK, connection established');
-
-        connectionObserver.next(createConnectionToClient({
-          sendDataSegment: async (segment: Segment) => new Promise<void>(async (resolve, reject) => {
-            const segmentAsString = segmentToString(segment);
-            // await wait(5000);
-            await sendRawSegment(segmentAsString);
-          }),
-          ackSegmentStream: segmentStreamOfOneClient.map(s => stringToSegment(s.message.toString())),
-          segmentSizeInBytes: maxSegmentSizeInBytes,
-          windowSize,
-          segmentTimeout,
-        }, info));
       });
     });
   });
@@ -284,11 +307,11 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
     });
   }
 
-  const rawSegmentStream = Observable.create((observer: Observer<BufferWithInfo>) => {
+  const socketStream = Observable.create((observer: Observer<RawSegment>) => {
     client.addListener('message', (message, serverInfo) => {
-      observer.next({ message, info: serverInfo });
+      observer.next({ raw, info: serverInfo });
     });
-  }) as Observable<BufferWithInfo>;
+  }) as Observable<RawSegment>;
 
   // rawSegmentStream.subscribe(rawSegment => console.log('RAW MESSAGE: ', rawSegment.message.toString()));
 
@@ -296,15 +319,15 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   console.log('sending SYNC...')
   await sendRawSegmentToServer('__HANDSHAKE__SYN');
   // wait for the SYN-ACK
-  await rawSegmentStream.filter(({ message }) => message.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
+  await socketStream.filter(({ raw }) => raw.toString() === '__HANDSHAKE__SYN-ACK').take(1).toPromise();
   console.log('got SYN-ACK. sending ACK...')
   // send the ACK
   await sendRawSegmentToServer('__HANDSHAKE__ACK');
 
   // connection established here
-  const segmentStream = (rawSegmentStream
+  const segmentStream = (socketStream
     .filter(({ info }) => info.address === address && info.port === port)
-    .map(({ message }) => message.toString())
+    .map(({ raw }) => raw.toString())
     .map(stringToSegment)
   );
 
