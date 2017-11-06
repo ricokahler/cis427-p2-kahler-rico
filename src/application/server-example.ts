@@ -12,3 +12,4 @@ rudpServer.connectionStream.subscribe(async connection => {
   await connection.sendMessage('message two');
 });
 
+rudpServer.bind(port => console.log(`Reliable UDP server running on port: ${port}`));

@@ -26,9 +26,13 @@ export interface ReliableUdpSocket {
   sendMessage: (message: string | Buffer) => Promise<void>,
 }
 
+Udp.createSocket('udp4').bind;
+
 export interface ReliableUdpServer {
   connectionStream: Observable<ReliableUdpSocket>,
-  close(): void
+  rawSocket: Udp.Socket,
+  close(callback?: () => void): void,
+  bind(callback?: (port: number) => void): void,
 }
 
 export interface ReliableUdpServerOptions {
@@ -36,6 +40,7 @@ export interface ReliableUdpServerOptions {
   segmentSizeInBytes: number,
   windowSize: number,
   segmentTimeout: number,
+  logger?: (logMessage: string) => void,
 }
 
 export interface ReliableUdpClientOptions {
@@ -45,9 +50,8 @@ export interface ReliableUdpClientOptions {
   windowSize: number,
   segmentTimeout: number,
   connectionTimeout: number,
+  logger?: (logMessage: string) => void,
 }
-
-
 
 export interface HandshakeSegment {
   clientId: string,
@@ -66,7 +70,7 @@ export interface DataSegment {
   last?: true,
 }
 
-export interface RawSegment {
+interface RawSegment {
   info: Udp.AddressInfo,
   raw: Buffer,
 }
@@ -78,18 +82,13 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
   const segmentSizeInBytes = rudpOptions.segmentSizeInBytes || DEFAULT_SEGMENT_SIZE;
   const windowSize = rudpOptions.windowSize || DEFAULT_WINDOW_SIZE;
   const segmentTimeout = rudpOptions.segmentTimeout || DEFAULT_SEGMENT_TIMEOUT;
-
-  server.on('listening', () => {
-    console.log(`Reliable UDP Server running on port ${port}.`)
-  });
+  const log = rudpOptions.logger || ((logMessage: string) => {/* do nothing */ });
 
   const rawSegmentStream = Observable.create((observer: Observer<RawSegment>) => {
     server.on('message', (raw, info) => observer.next({ raw, info }));
   }) as Observable<RawSegment>;
 
-  rawSegmentStream.subscribe(({ raw }) => {
-    console.log('IN :', raw.toString());
-  })
+  rawSegmentStream.subscribe(({ raw }) => { log(`IN : ${raw.toString()}`); })
 
   const connectionStream = Observable.create((connectionObserver: Observer<ReliableUdpSocket>) => {
     // group each segment by their socket info
@@ -139,7 +138,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             // message stream
             const dataSegmentStream = rawSegmentStream.filter(({ raw }) => {
               try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
-              catch { console.warn('caught'); return false; }
+              catch { return false; }
             }).map(({ raw }) => parseDataSegment(raw.toString()));
             async function sendAckSegment(ackSegment: AckSegment) {
               sendRawSegmentToClient(serializeAckSegment(ackSegment));
@@ -154,7 +153,7 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             const ackSegmentStream = (rawSegmentStream
               .filter(({ raw }) => {
                 try { return isAckSegment(JSON.parse(raw.toString())) }
-                catch { console.warn('caught'); return false; }
+                catch { return false; }
               })
               .map(({ raw }) => parseAckSegment(raw.toString()))
             );
@@ -188,10 +187,11 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
 
   const reliableUdpServer: ReliableUdpServer = {
     connectionStream,
-    close: () => server.close(),
+    rawSocket: server,
+    close: server.close.bind(server),
+    bind: (cb: (port: number) => void) => server.bind(port, () => cb(port)),
   };
 
-  server.bind(port); // start server
   return reliableUdpServer;
 }
 
@@ -235,7 +235,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const handshakeStreamForThisClient = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isHandshakeSegment(JSON.parse(raw.toString())); }
-      catch { console.warn('caught'); return false; }
+      catch { return false; }
     })
     .map(({ raw }) => parseHandshakeSegment(raw.toString()))
     .filter(handshakeSegment => handshakeSegment.clientId === clientId)
@@ -262,7 +262,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const dataSegmentStream = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isDataSegmentJsonable(JSON.parse(raw.toString())) }
-      catch { console.warn('caught'); return false; }
+      catch { return false; }
     })
     .map(({ raw }) => parseDataSegment(raw.toString()))
   );
@@ -279,7 +279,7 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   const ackSegmentStream = (rawSegmentStreamFromServer
     .filter(({ raw }) => {
       try { return isAckSegment(JSON.parse(raw.toString())) }
-      catch { console.warn('caught'); return false; }
+      catch { return false; }
     })
     .map(({ raw }) => parseAckSegment(raw.toString()))
   );
