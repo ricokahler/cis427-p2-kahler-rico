@@ -83,3 +83,23 @@ client.messageStream.subscribe(messageFromServer => {
 
 client.sendMessage('this message was/is being send from the client to the server');
 ```
+
+# Design
+
+Since this rUdp implementation does pipeline segment (i.e. send data and acks in the same segment), there are two interfaces for the two types of segments:
+
+```ts
+interface DataSegment {
+  messageId: string,
+  seq: number,
+  data: Buffer,
+  last?: true,
+}
+```
+
+```ts
+interface AckSegment {
+  messageId: string,
+  ack: number,
+}
+```
