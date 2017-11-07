@@ -16,7 +16,7 @@ import {
 import { createSender } from '../src/rudp/sender';
 import { createReceiver } from '../src/rudp/receiver';
 
-import { AsyncBlockingQueue, DeferredPromise } from '../src/rudp/util';
+import { AsyncBlockingQueue, DeferredPromise, clearStack } from '../src/rudp/util';
 
 const exampleMessage = 'The quick brown fox jumps over the lazy dog.';
 
@@ -136,8 +136,8 @@ describe('Out-of-order and duplicate and in-order segments', function () {
 describe('Fast retransmit', function () {
   it(
     oneLine`
-      The server needs to maintain a counter for duplicate acknowledgments. Once the counter
-      reaches 3, only the first unacknowledged segment will be retransmitted.
+      The server needs to maintain a counter for duplicate acknowledgments. Once the counter reaches
+      3, only the first unacknowledged segment will be retransmitted.
     `,
     async function () {
       const seqQueue = new AsyncBlockingQueue<DataSegment>();
@@ -169,14 +169,14 @@ describe('Fast retransmit', function () {
         // =========================================================================================
       });
 
-      const finishedSending = new DeferredPromise<void>();
-      send(exampleMessage).then(() => finishedSending.resolve());
+      const finishSending = new DeferredPromise<void>();
+      send(exampleMessage).then(() => finishSending.resolve());
 
       const offset = 3;
 
       let messageId = '';
       // send the first three ACKs in order
-      for (let i of range(offset)) {
+      for (let _ of range(offset)) {
         const dataSegment = await seqQueue.dequeue();
         messageId = dataSegment.messageId;
         ackSegmentStream.next({
@@ -186,7 +186,7 @@ describe('Fast retransmit', function () {
       }
 
       // SEND THE TWO MORE ACKS (TOTALLING TO THREE)
-      for (let i of range(2)) {
+      for (let _ of range(2)) {
         ackSegmentStream.next({
           ack: offset * segmentSizeInBytes,
           messageId,
@@ -194,7 +194,7 @@ describe('Fast retransmit', function () {
       }
 
       // send the rest of the ACKs in order
-      for (let i of range(offset, totalSegments)) {
+      for (let _ of range(offset, totalSegments)) {
         const dataSegment = await seqQueue.dequeue();
         ackSegmentStream.next({
           ack: dataSegment.seq + segmentSizeInBytes,
@@ -202,9 +202,76 @@ describe('Fast retransmit', function () {
         });
       }
 
-      await finishedSending;
+      await finishSending;
       expect(sentSegmentCount[offset]).to.be.greaterThan(1);
     }
   );
 });
 
+describe('Sliding window', function () {
+  it(
+    oneLine`
+      Upon receiving the acknowledgment from the client, the server will slide the sending window if
+      possible, which depends on the size of the window and the number of unacknowledged segments.
+    `,
+    async function () {
+      const dataSegmentQueue = new AsyncBlockingQueue<DataSegment>();
+      // ensure windowSize
+      const windowSize = 3;
+
+      const totalSegments = Math.ceil(
+        new Buffer(exampleMessage).byteLength / segmentSizeInBytes
+      ) + 2;
+
+      const ackSegmentStream = new ReplaySubject<AckSegment>();
+      let sendCount = 0;
+
+      async function sendDataSegment(dataSegment: DataSegment) {
+        dataSegmentQueue.enqueue(dataSegment);
+        sendCount += 1;
+      }
+
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        segmentTimeout,
+        segmentSizeInBytes,
+        windowSize,
+        // =========================================================================================
+        logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      });
+
+      const finishedSending = new DeferredPromise<void>();
+      // start the sending
+      send(exampleMessage).then(() => finishedSending.resolve());
+
+      // wait for a clear event stack
+      await clearStack();
+      // ========= the `sendCount` should be the window size because we didn't ack =========
+      expect(sendCount).to.be.equal(windowSize);
+      
+      // get the first data segment
+      const firstDataSegment = await dataSegmentQueue.dequeue();
+      // ack for the first segment
+      ackSegmentStream.next({
+        messageId: firstDataSegment.messageId,
+        ack: firstDataSegment.seq + segmentSizeInBytes
+      });
+      await clearStack();
+      // ====== now the sendCount should increase by one because we ACKed for the 1st segment ======
+      expect(sendCount).to.be.equal(windowSize + 1);
+
+      // ack for the rest
+      for (let _ of range(2, totalSegments)) {
+        const dataSegment = await dataSegmentQueue.dequeue();
+        ackSegmentStream.next({
+          messageId: dataSegment.messageId,
+          ack: dataSegment.seq + segmentSizeInBytes
+        });
+      }
+
+      await finishedSending;
+    }
+  );
+});

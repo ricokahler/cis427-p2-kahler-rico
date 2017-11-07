@@ -34,7 +34,7 @@ export function createSender(options: SenderOptions) {
       return _sendDataSegment(segment);
     }
   
-    log(`sending message: "${message}"...`)
+    log(`sending message: "${message}" with window size ${windowSize}...`)
   
     const id = uuid();
     const segmentStreamForThisMessage = ackSegmentStream.filter(segment => segment.messageId === id);

@@ -249,3 +249,7 @@ export class AsyncBlockingQueue<T> {
     return this._promises.length - this._resolvers.length;
   }
 }
+
+export function clearStack () {
+  return new Promise(resolve => setTimeout(() => resolve(), 0));
+}
