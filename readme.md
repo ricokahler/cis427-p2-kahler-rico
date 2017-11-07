@@ -278,6 +278,6 @@ The receiver uses the function `findNextSeqNumber` to find gaps in an array buff
 
 enjoy!
 
-(please see the [tests](./test/test.ts) if you haven't yet.)
+(please see the [tests](./tests/test.ts) if you haven't yet.)
 
 MIT license
