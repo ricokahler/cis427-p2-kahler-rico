@@ -20,6 +20,53 @@ import { AsyncBlockingQueue, DeferredPromise, clearStack } from '../src/rudp/uti
 
 const exampleMessage = 'The quick brown fox jumps over the lazy dog.';
 
+describe('Sender Receiver integration', function () {
+  it(
+    oneLine`
+      transfers one message from the sender to the receiver.
+    `,
+    async function () {
+
+      const dataSegmentStream = new ReplaySubject<DataSegment>();
+      const ackSegmentStream = new ReplaySubject<AckSegment>();
+
+      async function sendAckSegment(ackSegment: AckSegment) {
+        ackSegmentStream.next(ackSegment);
+      }
+
+      async function sendDataSegment(dataSegment: DataSegment) {
+        dataSegmentStream.next(dataSegment);
+      }
+
+      const receiver = createReceiver({
+        dataSegmentStream,
+        sendAckSegment,
+        segmentSizeInBytes,
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      })
+
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        segmentSizeInBytes,
+        segmentTimeout,
+        windowSize
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      });
+
+      send(exampleMessage);
+
+      const messageReceived = (await receiver.take(1).toPromise()).toString();
+
+      expect(messageReceived).to.be.equal(exampleMessage);
+    }
+  );
+});
+
 describe('Cumulative acknowledgement', function () {
   it(
     oneLine`
@@ -238,7 +285,7 @@ describe('Sliding window', function () {
         segmentSizeInBytes,
         windowSize,
         // =========================================================================================
-        logger: console.log.bind(console), // uncomment to enable logging
+        // logger: console.log.bind(console), // uncomment to enable logging
         // =========================================================================================
       });
 
@@ -250,7 +297,7 @@ describe('Sliding window', function () {
       await clearStack();
       // ========= the `sendCount` should be the window size because we didn't ack =========
       expect(sendCount).to.be.equal(windowSize);
-      
+
       // get the first data segment
       const firstDataSegment = await dataSegmentQueue.dequeue();
       // ack for the first segment
