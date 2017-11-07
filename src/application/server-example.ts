@@ -1,15 +1,23 @@
 import { createReliableUdpServer } from '../rudp';
+import * as fs from 'fs';
+import * as path from 'path';
 
-const rudpServer = createReliableUdpServer({ logger: console.log.bind(console) });
+const aliceTxt = fs.readFileSync(path.resolve(__dirname, './alice.txt'));
+
+const rudpServer = createReliableUdpServer({
+  segmentSizeInBytes: 100, // 1kB for segment size
+  logger: console.log.bind(console),
+});
 
 rudpServer.connectionStream.subscribe(async connection => {
-  console.log('client connected! ', connection.info);
+  console.log('Client connected! ', connection.info);
 
   connection.messageStream.subscribe(message => {
-    console.log('from client: ', message.toString());
+    console.log('MESSAGE FROM CLIENT: ', message.toString());
   })
-  await connection.sendMessage('The quick brown fox jumps over the lazy dog.');
-  await connection.sendMessage('message two');
+
+  console.log('Sending alice.txt...');
+  await connection.sendMessage(aliceTxt);
 });
 
 rudpServer.bind(port => console.log(`Reliable UDP server running on port: ${port}`));
