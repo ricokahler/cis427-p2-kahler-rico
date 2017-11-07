@@ -4,7 +4,7 @@ async function main() {
   try {
     const socket = await connectToReliableUdpServer({
       logger: console.log.bind(console),
-      segmentSizeInBytes: 100, // 1kB
+      segmentSizeInBytes: 100, // bytes of data. MUST match server's segment size
     });
 
     console.log('Connected to server! Downloading all of alice.txt...');
@@ -24,8 +24,6 @@ async function main() {
     console.error(e);
     process.exit(1);
   }
-
-  // socket.sendMessage('this message is from the client');
 }
 
 main();

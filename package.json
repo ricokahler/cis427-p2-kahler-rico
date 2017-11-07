@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "./node_modules/.bin/ts-node ./src/application/server-example.ts",
+    "start": "npm run server",
+    "server": "./node_modules/.bin/ts-node ./src/application/server-example.ts",
     "client": "./node_modules/.bin/ts-node ./src/application/client-example.ts",
     "test": "./node_modules/.bin/mocha --require ts-node/register \"test/**/*.ts\""
   },
