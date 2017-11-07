@@ -52,7 +52,7 @@ describe('Sender Receiver integration', function () {
         sendDataSegment,
         segmentSizeInBytes,
         segmentTimeout,
-        windowSize
+        windowSize,
         // =========================================================================================
         // logger: console.log.bind(console), // uncomment to enable logging
         // =========================================================================================

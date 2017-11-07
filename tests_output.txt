@@ -1,0 +1,426 @@
+
+> cis427-p2@0.0.0 test /Users/ricokahler/workspace/cis427-p2
+> mocha --require ts-node/register "test/**/*.ts"
+
+
+
+  Sender Receiver integration
+[SENDER  ]: sending message: "The quick brown fox jumps over the lazy dog." with window size 6...
+[SENDER  ]: segments to send:
+    {"data":{"type":"Buffer","data":[84,104,101,32]},"seq":0,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[113,117,105,99]},"seq":4,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[107,32,98,114]},"seq":8,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[111,119,110,32]},"seq":12,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[102,111,120,32]},"seq":16,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[106,117,109,112]},"seq":20,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[115,32,111,118]},"seq":24,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[101,114,32,116]},"seq":28,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[104,101,32,108]},"seq":32,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[97,122,121,32]},"seq":36,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"data":{"type":"Buffer","data":[100,111,103,46]},"seq":40,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593"}
+    {"seq":44,"messageId":"cb54a776-2ced-497a-9ab6-877a82368593","last":true,"data":{"type":"Buffer","data":[]}}
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: sending  SEQ 4 |
+[SENDER  ]: sending  SEQ 8 |
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: sending  SEQ 16 |
+[SENDER  ]: sending  SEQ 20 |
+[RECEIVER]: received SEQ 0
+[RECEIVER]: sending  ACK 4
+[RECEIVER]: received SEQ 4
+[RECEIVER]: sending  ACK 8
+[RECEIVER]: received SEQ 8
+[RECEIVER]: sending  ACK 12
+[RECEIVER]: received SEQ 12
+[RECEIVER]: sending  ACK 16
+[RECEIVER]: received SEQ 16
+[RECEIVER]: sending  ACK 20
+[RECEIVER]: received SEQ 20
+[RECEIVER]: sending  ACK 24
+[SENDER  ]: received ACK 4 |         which resolves SEQ 0
+[SENDER  ]: received ACK 8 |         which resolves SEQ 4
+[SENDER  ]: received ACK 12 |         which resolves SEQ 8
+[SENDER  ]: received ACK 16 |         which resolves SEQ 12
+[SENDER  ]: received ACK 20 |         which resolves SEQ 16
+[SENDER  ]: received ACK 24 |         which resolves SEQ 20
+[SENDER  ]: sending  SEQ 24 |
+[RECEIVER]: received SEQ 24
+[RECEIVER]: sending  ACK 28
+[SENDER  ]: sending  SEQ 28 |
+[RECEIVER]: received SEQ 28
+[RECEIVER]: sending  ACK 32
+[SENDER  ]: sending  SEQ 32 |
+[RECEIVER]: received SEQ 32
+[RECEIVER]: sending  ACK 36
+[SENDER  ]: sending  SEQ 36 |
+[RECEIVER]: received SEQ 36
+[RECEIVER]: sending  ACK 40
+[SENDER  ]: sending  SEQ 40 |
+[RECEIVER]: received SEQ 40
+[RECEIVER]: sending  ACK 44
+[SENDER  ]: sending  SEQ 44 |
+[RECEIVER]: received SEQ 44
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+[SENDER  ]: received ACK 28 |         which resolves SEQ 24
+[SENDER  ]: received ACK 32 |         which resolves SEQ 28
+[SENDER  ]: received ACK 36 |         which resolves SEQ 32
+[SENDER  ]: received ACK 40 |         which resolves SEQ 36
+[SENDER  ]: received ACK 44 |         which resolves SEQ 40
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+    ✓ transfers one message from the sender to the receiver.
+[SENDER  ]: finished sending message: "The quick brown fox jumps over the lazy dog." with acknowledgement.
+
+  Cumulative acknowledgement
+[RECEIVER]: received SEQ 0
+[RECEIVER]: sending  ACK 4
+[RECEIVER]: received SEQ 4
+[RECEIVER]: sending  ACK 8
+[RECEIVER]: received SEQ 8
+[RECEIVER]: sending  ACK 12
+[RECEIVER]: received SEQ 12
+[RECEIVER]: sending  ACK 16
+[RECEIVER]: received SEQ 16
+[RECEIVER]: sending  ACK 20
+[RECEIVER]: received SEQ 20
+[RECEIVER]: sending  ACK 24
+[RECEIVER]: received SEQ 24
+[RECEIVER]: sending  ACK 28
+[RECEIVER]: received SEQ 28
+[RECEIVER]: sending  ACK 32
+[RECEIVER]: received SEQ 32
+[RECEIVER]: sending  ACK 36
+[RECEIVER]: received SEQ 36
+[RECEIVER]: sending  ACK 40
+[RECEIVER]: received SEQ 40
+[RECEIVER]: sending  ACK 44
+[RECEIVER]: received SEQ 44
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+    ✓ Upon receiving a segment from the server, the client will respond with a cumulative acknowledgment, which follows the standard protocol defined for TCP
+
+  Out-of-order and duplicate and in-order segments
+[RECEIVER]: received SEQ 28
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 8
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 20
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 4
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 24
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 40
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 16
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 36
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 44
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 12
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 0
+[RECEIVER]: sending  ACK 32
+[RECEIVER]: received SEQ 32
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+    ✓ Upon receiving a segment, if the client detects a gap (out of order), buffer it; if it is duplication or corruption, just discard it; otherwise (in order) print out the content as shown before.
+
+  Fast retransmit
+[SENDER  ]: sending message: "The quick brown fox jumps over the lazy dog." with window size 6...
+[SENDER  ]: segments to send:
+    {"data":{"type":"Buffer","data":[84,104,101,32]},"seq":0,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[113,117,105,99]},"seq":4,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[107,32,98,114]},"seq":8,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[111,119,110,32]},"seq":12,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[102,111,120,32]},"seq":16,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[106,117,109,112]},"seq":20,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[115,32,111,118]},"seq":24,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[101,114,32,116]},"seq":28,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[104,101,32,108]},"seq":32,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[97,122,121,32]},"seq":36,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"data":{"type":"Buffer","data":[100,111,103,46]},"seq":40,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8"}
+    {"seq":44,"messageId":"8effb424-b848-42d8-9f34-5e77b21723d8","last":true,"data":{"type":"Buffer","data":[]}}
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: sending  SEQ 4 |
+[SENDER  ]: sending  SEQ 8 |
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: sending  SEQ 16 |
+[SENDER  ]: sending  SEQ 20 |
+[SENDER  ]: received ACK 4 |         which resolves SEQ 0
+[SENDER  ]: received ACK 8 |         which resolves SEQ 4
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 12. Re-sending segment...
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: received ACK 12 |         which resolves SEQ 8
+[SENDER  ]: sending  SEQ 28 |
+[SENDER  ]: received ACK 16 |         which resolves SEQ 12
+[SENDER  ]: sending  SEQ 32 |
+[SENDER  ]: received ACK 20 |         which resolves SEQ 16
+[SENDER  ]: sending  SEQ 36 |
+[SENDER  ]: received ACK 24 |         which resolves SEQ 20
+[SENDER  ]: sending  SEQ 40 |
+[SENDER  ]: sending  SEQ 44 |
+[SENDER  ]: received ACK 28 |         which resolves SEQ 24
+[SENDER  ]: received ACK 32 |         which resolves SEQ 28
+[SENDER  ]: received ACK 36 |         which resolves SEQ 32
+[SENDER  ]: received ACK 40 |         which resolves SEQ 36
+[SENDER  ]: received ACK 44 |         which resolves SEQ 40
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+[SENDER  ]: finished sending message: "The quick brown fox jumps over the lazy dog." with acknowledgement.
+    ✓ The server needs to maintain a counter for duplicate acknowledgments. Once the counter reaches 3, only the first unacknowledged segment will be retransmitted.
+
+  Sliding window
+[SENDER  ]: sending message: "The quick brown fox jumps over the lazy dog." with window size 3...
+[SENDER  ]: segments to send:
+    {"data":{"type":"Buffer","data":[84,104,101,32]},"seq":0,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[113,117,105,99]},"seq":4,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[107,32,98,114]},"seq":8,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[111,119,110,32]},"seq":12,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[102,111,120,32]},"seq":16,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[106,117,109,112]},"seq":20,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[115,32,111,118]},"seq":24,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[101,114,32,116]},"seq":28,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[104,101,32,108]},"seq":32,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[97,122,121,32]},"seq":36,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"data":{"type":"Buffer","data":[100,111,103,46]},"seq":40,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52"}
+    {"seq":44,"messageId":"1fab8d27-31b3-40c4-9d94-f05158b86e52","last":true,"data":{"type":"Buffer","data":[]}}
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: sending  SEQ 4 |
+[SENDER  ]: sending  SEQ 8 |
+[SENDER  ]: received ACK 4 |         which resolves SEQ 0
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: received ACK 8 |         which resolves SEQ 4
+[SENDER  ]: received ACK 12 |         which resolves SEQ 8
+[SENDER  ]: sending  SEQ 16 |
+[SENDER  ]: received ACK 16 |         which resolves SEQ 12
+[SENDER  ]: sending  SEQ 20 |
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: received ACK 20 |         which resolves SEQ 16
+[SENDER  ]: received ACK 24 |         which resolves SEQ 20
+[SENDER  ]: sending  SEQ 28 |
+[SENDER  ]: received ACK 28 |         which resolves SEQ 24
+[SENDER  ]: sending  SEQ 32 |
+[SENDER  ]: sending  SEQ 36 |
+[SENDER  ]: received ACK 32 |         which resolves SEQ 28
+[SENDER  ]: received ACK 36 |         which resolves SEQ 32
+[SENDER  ]: sending  SEQ 40 |
+[SENDER  ]: received ACK 40 |         which resolves SEQ 36
+[SENDER  ]: sending  SEQ 44 |
+[SENDER  ]: received ACK 44 |         which resolves SEQ 40
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+[SENDER  ]: finished sending message: "The quick brown fox jumps over the lazy dog." with acknowledgement.
+    ✓ Upon receiving the acknowledgment from the client, the server will slide the sending window if possible, which depends on the size of the window and the number of unacknowledged segments.
+
+  Delay
+[SENDER  ]: sending message: "The quick brown fox jumps over the lazy dog." with window size 6...
+[SENDER  ]: segments to send:
+    {"data":{"type":"Buffer","data":[84,104,101,32]},"seq":0,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[113,117,105,99]},"seq":4,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[107,32,98,114]},"seq":8,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[111,119,110,32]},"seq":12,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[102,111,120,32]},"seq":16,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[106,117,109,112]},"seq":20,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[115,32,111,118]},"seq":24,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[101,114,32,116]},"seq":28,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[104,101,32,108]},"seq":32,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[97,122,121,32]},"seq":36,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"data":{"type":"Buffer","data":[100,111,103,46]},"seq":40,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d"}
+    {"seq":44,"messageId":"e90e56ba-8c4f-44f8-b9f7-a9318d6a5b8d","last":true,"data":{"type":"Buffer","data":[]}}
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: sending  SEQ 4 |
+[SENDER  ]: sending  SEQ 8 |
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: sending  SEQ 16 |
+[SENDER  ]: sending  SEQ 20 |
+[RECEIVER]: received SEQ 4
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 20
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 8
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 16
+[RECEIVER]: sending  ACK 0
+[RECEIVER]: received SEQ 0
+[RECEIVER]: sending  ACK 12
+[RECEIVER]: received SEQ 12
+[RECEIVER]: sending  ACK 24
+[SENDER  ]: received ACK 24 |         which resolves SEQ 0
+[SENDER  ]: received ACK 24 |         which resolves SEQ 4
+[SENDER  ]: received ACK 24 |         which resolves SEQ 8
+[SENDER  ]: received ACK 24 |         which resolves SEQ 12
+[SENDER  ]: received ACK 24 |         which resolves SEQ 16
+[SENDER  ]: received ACK 24 |         which resolves SEQ 20
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: sending  SEQ 28 |
+[SENDER  ]: sending  SEQ 32 |
+[SENDER  ]: sending  SEQ 36 |
+[SENDER  ]: sending  SEQ 40 |
+[SENDER  ]: sending  SEQ 44 |
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 0. Re-sending segment...
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 0. Re-sending segment...
+[SENDER  ]: sending  SEQ 0 |
+[RECEIVER]: received SEQ 44
+[RECEIVER]: sending  ACK 24
+[RECEIVER]: received SEQ 28
+[RECEIVER]: sending  ACK 24
+[RECEIVER]: received SEQ 0
+[RECEIVER]: sending  ACK 24
+[RECEIVER]: received SEQ 32
+[RECEIVER]: sending  ACK 24
+[RECEIVER]: received SEQ 24
+[RECEIVER]: sending  ACK 36
+[RECEIVER]: received SEQ 36
+[RECEIVER]: sending  ACK 40
+[RECEIVER]: received SEQ 40
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+    ✓ Upon receiving a segment or acknowledgement, the client/server will add a random delay between 30 and 50ms before processing it further. (135ms)
+[RECEIVER]: received SEQ 0
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+
+  Loss
+[SENDER  ]: sending message: "The quick brown fox jumps over the lazy dog." with window size 6...
+[SENDER  ]: segments to send:
+    {"data":{"type":"Buffer","data":[84,104,101,32]},"seq":0,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[113,117,105,99]},"seq":4,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[107,32,98,114]},"seq":8,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[111,119,110,32]},"seq":12,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[102,111,120,32]},"seq":16,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[106,117,109,112]},"seq":20,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[115,32,111,118]},"seq":24,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[101,114,32,116]},"seq":28,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[104,101,32,108]},"seq":32,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[97,122,121,32]},"seq":36,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"data":{"type":"Buffer","data":[100,111,103,46]},"seq":40,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b"}
+    {"seq":44,"messageId":"c9c15019-3580-4709-8bd4-9dbcf2db110b","last":true,"data":{"type":"Buffer","data":[]}}
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: sending  SEQ 4 |
+[SENDER  ]: sending  SEQ 8 |
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: sending  SEQ 16 |
+[SENDER  ]: sending  SEQ 20 |
+[RECEIVER]: received SEQ 0
+[RECEIVER]: sending  ACK 4
+[RECEIVER]: received SEQ 8
+[RECEIVER]: sending  ACK 4
+[RECEIVER]: received SEQ 12
+[RECEIVER]: sending  ACK 4
+[RECEIVER]: received SEQ 16
+[RECEIVER]: sending  ACK 4
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 4. Re-sending segment...
+[SENDER  ]: sending  SEQ 4 |
+[RECEIVER]: received SEQ 4
+[RECEIVER]: sending  ACK 20
+[RECEIVER]: received SEQ 20
+[RECEIVER]: sending  ACK 24
+[SENDER  ]: received ACK 4 |         which resolves SEQ 0
+[SENDER  ]: received ACK 20 |         which resolves SEQ 4
+[SENDER  ]: received ACK 20 |         which resolves SEQ 8
+[SENDER  ]: received ACK 20 |         which resolves SEQ 12
+[SENDER  ]: received ACK 20 |         which resolves SEQ 16
+[SENDER  ]: received ACK 24 |         which resolves SEQ 20
+[SENDER  ]: sending  SEQ 24 |
+[RECEIVER]: received SEQ 24
+[RECEIVER]: sending  ACK 28
+[SENDER  ]: sending  SEQ 28 |
+[RECEIVER]: received SEQ 28
+[RECEIVER]: sending  ACK 32
+[SENDER  ]: sending  SEQ 32 |
+[RECEIVER]: received SEQ 32
+[RECEIVER]: sending  ACK 36
+[SENDER  ]: sending  SEQ 36 |
+[RECEIVER]: received SEQ 36
+[RECEIVER]: sending  ACK 40
+[SENDER  ]: sending  SEQ 40 |
+[RECEIVER]: received SEQ 40
+[RECEIVER]: sending  ACK 44
+[SENDER  ]: sending  SEQ 44 |
+[RECEIVER]: received SEQ 44
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+[SENDER  ]: received ACK 28 |         which resolves SEQ 24
+[SENDER  ]: received ACK 32 |         which resolves SEQ 28
+[SENDER  ]: received ACK 36 |         which resolves SEQ 32
+[SENDER  ]: received ACK 40 |         which resolves SEQ 36
+[SENDER  ]: received ACK 44 |         which resolves SEQ 40
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+    ✓ Upon receiving the 2nd segment, the client will intentionally drop it to simulate its loss. Upon receiving the 3rd ACK, the server will intentionally drop it to simulate its loss.
+[SENDER  ]: finished sending message: "The quick brown fox jumps over the lazy dog." with acknowledgement.
+
+  Timeout
+[SENDER  ]: sending message: "The quick brown fox jumps over the lazy dog." with window size 6...
+[SENDER  ]: segments to send:
+    {"data":{"type":"Buffer","data":[84,104,101,32]},"seq":0,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[113,117,105,99]},"seq":4,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[107,32,98,114]},"seq":8,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[111,119,110,32]},"seq":12,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[102,111,120,32]},"seq":16,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[106,117,109,112]},"seq":20,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[115,32,111,118]},"seq":24,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[101,114,32,116]},"seq":28,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[104,101,32,108]},"seq":32,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[97,122,121,32]},"seq":36,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"data":{"type":"Buffer","data":[100,111,103,46]},"seq":40,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9"}
+    {"seq":44,"messageId":"9d4a3d6d-8156-4656-a821-6728b5c1a0f9","last":true,"data":{"type":"Buffer","data":[]}}
+[SENDER  ]: sending  SEQ 0 |
+[SENDER  ]: sending  SEQ 4 |
+[SENDER  ]: sending  SEQ 8 |
+[SENDER  ]: sending  SEQ 12 |
+[SENDER  ]: sending  SEQ 16 |
+[SENDER  ]: sending  SEQ 20 |
+[SENDER  ]: received ACK 4 |         which resolves SEQ 0
+[SENDER  ]: received ACK 8 |         which resolves SEQ 4
+[SENDER  ]: received ACK 12 |         which resolves SEQ 8
+[SENDER  ]: received ACK 16 |         which resolves SEQ 12
+[SENDER  ]: received ACK 20 |         which resolves SEQ 16
+[SENDER  ]: received ACK 24 |         which resolves SEQ 20
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: sending  SEQ 28 |
+[SENDER  ]: sending  SEQ 32 |
+[SENDER  ]: sending  SEQ 36 |
+[SENDER  ]: sending  SEQ 40 |
+[SENDER  ]: sending  SEQ 44 |
+[SENDER  ]: received ACK 28 |         which resolves SEQ 24
+[SENDER  ]: received ACK 32 |         which resolves SEQ 28
+[SENDER  ]: received ACK 36 |         which resolves SEQ 32
+[SENDER  ]: received ACK 40 |         which resolves SEQ 36
+[SENDER  ]: received ACK 44 |         which resolves SEQ 40
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 24. Re-sending segment...
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 24. Re-sending segment...
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 24. Re-sending segment...
+[SENDER  ]: sending  SEQ 24 |
+[SENDER  ]: received ACK 40 |         which resolves SEQ 24
+[SENDER  ]: received ACK 40 |         which resolves SEQ 28
+[SENDER  ]: received ACK 40 |         which resolves SEQ 32
+[SENDER  ]: received ACK 40 |         which resolves SEQ 36
+[SENDER  ]: received ACK 48 |         which resolves SEQ 40
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+[SENDER  ]: finished sending message: "The quick brown fox jumps over the lazy dog." with acknowledgement.
+[SENDER  ]: TIMEOUT OCCURRED: for segment 44. Retrying...
+[SENDER  ]: sending  SEQ 44 |
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+[SENDER  ]: received ACK 48 |         which resolves SEQ 44
+[SENDER  ]: finished sending message: "The quick brown fox jumps over the lazy dog." with acknowledgement.
+    ✓ The sender should re-transmit a segment after a certain time period if the client does not acknowledge that segment. (54ms)
+
+
+  8 passing (217ms)
+
+[RECEIVER]: received SEQ 24
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+[RECEIVER]: received SEQ 24
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+[RECEIVER]: received SEQ 24
+[RECEIVER]: finished receiving message: "The quick brown fox jumps over the lazy dog."!
+[RECEIVER]: sending  ACK 48
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 48. Re-sending segment...
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 48. Re-sending segment...
+[SENDER  ]: FAST RE-TRANSMIT: got more than three ACKs for segment 48. Re-sending segment...
