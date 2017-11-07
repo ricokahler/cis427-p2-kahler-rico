@@ -33,9 +33,9 @@ export function createSender(options: SenderOptions) {
       log(`sending  SEQ ${segment.seq} |`);
       return _sendDataSegment(segment);
     }
-  
+
     log(`sending message: "${message}" with window size ${windowSize}...`)
-  
+
     const id = uuid();
     const segmentStreamForThisMessage = ackSegmentStream.filter(segment => segment.messageId === id);
     const ackCounts = [] as number[];
@@ -63,19 +63,19 @@ export function createSender(options: SenderOptions) {
       last: true,
       data: new Buffer(''),
     });
-  
+
     log(`segments to send:\n${dataSegments
       .map(segment => `    ${JSON.stringify(segment)}`)
       .join('\n')
       }`);
-  
+
     // fast re-transmit
     segmentStreamForThisMessage.subscribe(async ackSegment => {
       ackCounts[ackSegment.ack] = (/*if*/ ackCounts[ackSegment.ack] === undefined
         ? 1
         : ackCounts[ackSegment.ack] + 1
       );
-  
+
       if (ackCounts[ackSegment.ack] >= 3) {
         log(
           `FAST RE-TRANSMIT: got more than three ACKs for segment ${ackSegment.ack}. `
@@ -87,11 +87,11 @@ export function createSender(options: SenderOptions) {
         }
       }
     });
-  
+
     function sendDataSegmentAndWaitForAck(segment: DataSegment) {
       return new Promise<number>(async (resolve, reject) => {
         let gotAck = false;
-  
+
         // resolve promise on ack
         (segmentStreamForThisMessage
           .filter(ackSegment => ackSegment.ack > segment.seq)
@@ -103,24 +103,25 @@ export function createSender(options: SenderOptions) {
             resolve(ackSegment.ack);
           })
         );
-  
+
         // reject on timeout
         setTimeout(() => {
           if (!gotAck) {
-            log(`timeout occurred for segment ${segment.seq}. Retrying...`)
+            log(`TIMEOUT OCCURRED: for segment ${segment.seq}. Retrying...`)
             reject(new Error('timeout occurred'));
           }
         }, segmentTimeout);
-  
+
         await sendDataSegment(segment);
       });
     }
-  
+
     let lastSegmentSent = 0;
     let greatestAck = 0;
-  
+    const receivedAckSegments = [] as AckSegment[];
+
     const finished = new DeferredPromise<void>();
-  
+
     async function send(segment: DataSegment | undefined) {
       if (!segment) {
         // the segment will be undefined when the next segment index is greater than the number of
@@ -151,10 +152,10 @@ export function createSender(options: SenderOptions) {
         send(segment);
       }
     }
-  
+
     // bootstrap the sending
     dataSegments.slice(0, windowSize).forEach(send);
-  
+
     return finished;
   }
 }

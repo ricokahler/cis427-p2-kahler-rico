@@ -56,7 +56,7 @@ export function createReceiver(options: ReceiverOptions) {
         let receivedLast = false;
         const receivedDataSegments = [] as (DataSegment | undefined)[];
         segmentsByMessage.subscribe(async dataSegment => {
-          log(`received SEQ ${dataSegment.seq}`)
+          log(`received SEQ ${dataSegment.seq}`);
           receivedDataSegments[Math.floor(dataSegment.seq / segmentSizeInBytes)] = dataSegment;
           const nextExpectedSequenceNumber = findNextSequenceNumber(
             receivedDataSegments,

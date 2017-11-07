@@ -358,7 +358,7 @@ describe('Delay', function () {
         sendDataSegment,
         segmentSizeInBytes,
         segmentTimeout,
-        windowSize
+        windowSize,
         // =========================================================================================
         // logger: console.log.bind(console), // uncomment to enable logging
         // =========================================================================================
@@ -415,7 +415,7 @@ describe('Loss', function () {
         sendDataSegment,
         segmentSizeInBytes,
         segmentTimeout,
-        windowSize
+        windowSize,
         // =========================================================================================
         // logger: console.log.bind(console), // uncomment to enable logging
         // =========================================================================================
@@ -426,6 +426,59 @@ describe('Loss', function () {
       const messageReceived = (await receiver.take(1).toPromise()).toString();
 
       expect(messageReceived).to.be.equal(exampleMessage);
+    }
+  );
+});
+
+describe('Timeout', function () {
+  it(
+    oneLine`
+      The sender should re-transmit a segment after a certain time period if the client does not
+      acknowledge that segment.
+    `,
+    async function () {
+
+      const bufferLength = new Buffer(exampleMessage).byteLength;
+
+      // const dataSegmentStream = new ReplaySubject<DataSegment>();
+      const receivedDataSegmentCount = [] as (number | undefined)[];
+      const ackSegmentStream = new ReplaySubject<AckSegment>();
+
+      let skippedAck = false;
+
+      async function sendDataSegment(dataSegment: DataSegment) {
+        const count = receivedDataSegmentCount[Math.floor(dataSegment.seq / segmentSizeInBytes)];
+        receivedDataSegmentCount[dataSegment.seq / segmentSizeInBytes] = (/*if*/ count === undefined
+          ? 1
+          : count + 1
+        );
+
+        if (dataSegment.seq === bufferLength && !skippedAck) {
+          skippedAck = true;
+        } else {
+          ackSegmentStream.next({
+            ack: dataSegment.seq + segmentSizeInBytes,
+            messageId: dataSegment.messageId
+          });
+        }
+      }
+
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        segmentSizeInBytes,
+        segmentTimeout: 50, // notice the smaller timeout to make the test run faster
+        windowSize,
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      });
+
+      const finishSending = new DeferredPromise<void>();
+      send(exampleMessage).then(() => finishSending.resolve());
+      await finishSending;
+      const lastSegmentCount = receivedDataSegmentCount[receivedDataSegmentCount.length - 1];
+      expect(lastSegmentCount).to.be.equal(2)
     }
   );
 });
