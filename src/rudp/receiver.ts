@@ -27,7 +27,7 @@ export function findNextSequenceNumber(
   for (let buffer of dataSegments) {
     if (!buffer) {
       return i * segmentSizeInBytes;
-    }
+  }
     i += 1;
   }
   const lastBuffer = dataSegments[dataSegments.length - 1];
@@ -90,7 +90,7 @@ export function createReceiver(options: ReceiverOptions) {
           }
 
           // ack
-          log(`sending ACK ${nextExpectedSequenceNumber}`);
+          log(`sending  ACK ${nextExpectedSequenceNumber}`);
           await sendAckSegment({
             ack: nextExpectedSequenceNumber,
             messageId: dataSegment.messageId,

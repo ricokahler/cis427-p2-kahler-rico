@@ -160,14 +160,17 @@ export function createReliableUdpServer(rudpOptions?: Partial<ReliableUdpServerO
             }
             const messageQueue = new TaskQueue<void>();
             async function sendMessage(message: string | Buffer) {
-              const promise = messageQueue.add(() => createSender(message, {
-                ackSegmentStream,
-                sendDataSegment,
-                windowSize,
-                segmentTimeout,
-                segmentSizeInBytes,
-                logger: log,
-              }));
+              const promise = messageQueue.add(async () => {
+                const send = createSender({
+                  ackSegmentStream,
+                  sendDataSegment,
+                  windowSize,
+                  segmentTimeout,
+                  segmentSizeInBytes,
+                  logger: log,
+                });
+                await send(message);
+              });
               messageQueue.execute();
               return promise;
             }
@@ -287,14 +290,17 @@ export async function connectToReliableUdpServer(rudpOptions?: Partial<ReliableU
   }
   const messageQueue = new TaskQueue<void>();
   async function sendMessage(message: string | Buffer) {
-    const promise = messageQueue.add(() => createSender(message, {
-      ackSegmentStream,
-      sendDataSegment,
-      windowSize,
-      segmentTimeout,
-      segmentSizeInBytes,
-      logger: log,
-    }));
+    const promise = messageQueue.add(async () => {
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        windowSize,
+        segmentTimeout,
+        segmentSizeInBytes,
+        logger: log,
+      });
+      await send(message);
+    });
     messageQueue.execute();
     return promise;
   }
