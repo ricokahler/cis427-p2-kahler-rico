@@ -6,15 +6,19 @@ import { range, shuffle } from 'lodash';
 import { Observable, Observer, ReplaySubject } from 'rxjs';
 import { oneLine } from 'common-tags';
 
-import { DataSegment, AckSegment } from '../src/rudp';
+import {
+  DataSegment, AckSegment,
+  DEFAULT_SEGMENT_SIZE as segmentSizeInBytes,
+  DEFAULT_SEGMENT_TIMEOUT as segmentTimeout,
+  DEFAULT_WINDOW_SIZE as windowSize,
+} from '../src/rudp';
 
 import { createSender } from '../src/rudp/sender';
 import { createReceiver } from '../src/rudp/receiver';
 
-import { AsyncBlockingQueue } from '../src/rudp/util';
+import { AsyncBlockingQueue, DeferredPromise } from '../src/rudp/util';
 
 const exampleMessage = 'The quick brown fox jumps over the lazy dog.';
-const segmentSizeInBytes = 4;
 
 describe('Cumulative acknowledgement', function () {
   it(
@@ -44,10 +48,10 @@ describe('Cumulative acknowledgement', function () {
         data: new Buffer(''),
       })
 
-      const ackStream = new AsyncBlockingQueue<AckSegment>();
+      const ackQueue = new AsyncBlockingQueue<AckSegment>();
 
       async function sendAckSegment(ackSegment: AckSegment) {
-        ackStream.enqueue(ackSegment);
+        ackQueue.enqueue(ackSegment);
       }
 
       const dataSegmentStream = Observable.create(async (observer: Observer<DataSegment>) => {
@@ -55,7 +59,7 @@ describe('Cumulative acknowledgement', function () {
           observer.next(dataSegment);
 
           // WAITS FOR THE ACK
-          const ackSegment = await ackStream.dequeue();
+          const ackSegment = await ackQueue.dequeue();
           // CHECKS TO SEE IF THE ACK IS THE NEXT EXPECTED SEGMENT
           expect(ackSegment.ack).to.be.equal(dataSegment.seq + segmentSizeInBytes);
         }
@@ -65,7 +69,9 @@ describe('Cumulative acknowledgement', function () {
         dataSegmentStream,
         segmentSizeInBytes,
         sendAckSegment,
+        // =========================================================================================
         // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
       });
 
       const message = (await messageStream.take(1).toPromise()).toString();
@@ -83,7 +89,6 @@ describe('Out-of-order and duplicate and in-order segments', function () {
       shown before.
     `,
     async function () {
-
       const messageId = uuid();
 
       const buffer = new Buffer(exampleMessage);
@@ -117,7 +122,9 @@ describe('Out-of-order and duplicate and in-order segments', function () {
         dataSegmentStream,
         segmentSizeInBytes,
         sendAckSegment,
+        // =========================================================================================
         // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
       });
 
       const message = (await messageStream.take(1).toPromise()).toString();
@@ -128,7 +135,76 @@ describe('Out-of-order and duplicate and in-order segments', function () {
 
 describe('Fast retransmit', function () {
   it(
-    ``
+    oneLine`
+      The server needs to maintain a counter for duplicate acknowledgments. Once the counter
+      reaches 3, only the first unacknowledged segment will be retransmitted.
+    `,
+    async function () {
+      const seqQueue = new AsyncBlockingQueue<DataSegment>();
+
+      const totalSegments = Math.ceil(
+        new Buffer(exampleMessage).byteLength / segmentSizeInBytes
+      ) + 2;
+
+      const ackSegmentStream = new ReplaySubject<AckSegment>();
+      const sentSegmentCount = [] as (number | undefined)[];
+
+      async function sendDataSegment(dataSegment: DataSegment) {
+        const count = sentSegmentCount[dataSegment.seq / segmentSizeInBytes];
+        sentSegmentCount[dataSegment.seq / segmentSizeInBytes] = (/*if*/ count === undefined
+          ? 1
+          : count + 1
+        );
+        seqQueue.enqueue(dataSegment);
+      }
+
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        segmentTimeout,
+        segmentSizeInBytes,
+        windowSize,
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      });
+
+      const finishedSending = new DeferredPromise<void>();
+      send(exampleMessage).then(() => finishedSending.resolve());
+
+      const offset = 3;
+
+      let messageId = '';
+      // send the first three ACKs in order
+      for (let i of range(offset)) {
+        const dataSegment = await seqQueue.dequeue();
+        messageId = dataSegment.messageId;
+        ackSegmentStream.next({
+          ack: dataSegment.seq + segmentSizeInBytes,
+          messageId: dataSegment.messageId
+        });
+      }
+
+      // SEND THE TWO MORE ACKS (TOTALLING TO THREE)
+      for (let i of range(2)) {
+        ackSegmentStream.next({
+          ack: offset * segmentSizeInBytes,
+          messageId,
+        });
+      }
+
+      // send the rest of the ACKs in order
+      for (let i of range(offset, totalSegments)) {
+        const dataSegment = await seqQueue.dequeue();
+        ackSegmentStream.next({
+          ack: dataSegment.seq + segmentSizeInBytes,
+          messageId: dataSegment.messageId
+        });
+      }
+
+      await finishedSending;
+      expect(sentSegmentCount[offset]).to.be.greaterThan(1);
+    }
   );
 });
 

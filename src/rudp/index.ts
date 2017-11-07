@@ -13,12 +13,12 @@ import {
 import { createReceiver } from './receiver';
 import { createSender } from './sender';
 
-const DEFAULT_SEGMENT_SIZE = 4;
-const DEFAULT_SEGMENT_TIMEOUT = 1000;
-const DEFAULT_PORT = 8090;
-const DEFAULT_HOST = 'localhost';
-const DEFAULT_WINDOW_SIZE = 5;
-const DEFAULT_CONNECTION_TIMEOUT = 3000;
+export const DEFAULT_SEGMENT_SIZE = 4;
+export const DEFAULT_SEGMENT_TIMEOUT = 1000;
+export const DEFAULT_PORT = 8090;
+export const DEFAULT_HOST = 'localhost';
+export const DEFAULT_WINDOW_SIZE = 5;
+export const DEFAULT_CONNECTION_TIMEOUT = 3000;
 
 export interface ReliableUdpSocket {
   info: Udp.AddressInfo,

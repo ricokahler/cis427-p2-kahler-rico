@@ -17,7 +17,7 @@ export interface SenderOptions {
 
 export function createSender(options: SenderOptions) {
   const {
-    sendDataSegment,
+    sendDataSegment: _sendDataSegment,
     ackSegmentStream,
     windowSize,
     segmentSizeInBytes,
@@ -26,6 +26,12 @@ export function createSender(options: SenderOptions) {
   return function message(message: string | Buffer) {
     function log(logMessage: string) {
       if (options.logger) { options.logger(`${LOGGER_PREFIX}${logMessage}`); }
+    }
+
+    // wrapper for logging
+    function sendDataSegment(segment: DataSegment) {
+      log(`sending  SEQ ${segment.seq} |`);
+      return _sendDataSegment(segment);
     }
   
     log(`sending message: "${message}"...`)
@@ -72,7 +78,7 @@ export function createSender(options: SenderOptions) {
   
       if (ackCounts[ackSegment.ack] >= 3) {
         log(
-          `fast re-transmit: got more than three ACKs for segment ${ackSegment.ack}. `
+          `FAST RE-TRANSMIT: got more than three ACKs for segment ${ackSegment.ack}. `
           + `Re-sending segment...`
         );
         const segmentToRetransmit = dataSegments[Math.floor(ackSegment.ack / segmentSizeInBytes)];
@@ -84,7 +90,6 @@ export function createSender(options: SenderOptions) {
   
     function sendDataSegmentAndWaitForAck(segment: DataSegment) {
       return new Promise<number>(async (resolve, reject) => {
-        log(`sending  SEQ ${segment.seq}`);
         let gotAck = false;
   
         // resolve promise on ack
@@ -94,7 +99,7 @@ export function createSender(options: SenderOptions) {
           .toPromise()
           .then(ackSegment => {
             gotAck = true;
-            log(`received ACK ${segment.seq}`)
+            log(`received ACK ${ackSegment.ack} |         which resolves SEQ ${segment.seq}`);
             resolve(ackSegment.ack);
           })
         );
