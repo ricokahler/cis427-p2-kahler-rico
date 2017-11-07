@@ -2,6 +2,10 @@
 
 This project implements a client-server layer on top of UDP. This was made for CIS 427 - Networking.
 
+# PDF VERSION
+
+[Download here](./readme.pdf)
+
 # Install
 
 This example uses node.js as the vm to run the files. [Install the latest version of node.js from here](https://nodejs.org/en/download/current/).
