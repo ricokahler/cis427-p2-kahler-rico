@@ -16,7 +16,7 @@ import {
 import { createSender } from '../src/rudp/sender';
 import { createReceiver } from '../src/rudp/receiver';
 
-import { AsyncBlockingQueue, DeferredPromise, clearStack } from '../src/rudp/util';
+import { AsyncBlockingQueue, DeferredPromise, clearStack, wait } from '../src/rudp/util';
 
 const exampleMessage = 'The quick brown fox jumps over the lazy dog.';
 
@@ -319,6 +319,56 @@ describe('Sliding window', function () {
       }
 
       await finishedSending;
+    }
+  );
+});
+
+describe('Delay', function () {
+  it(
+    oneLine`
+      Upon receiving a segment or acknowledgement, the client/server will add a random delay between
+      30 and 50ms before processing it further.
+    `,
+    async function () {
+
+      const dataSegmentStream = new ReplaySubject<DataSegment>();
+      const ackSegmentStream = new ReplaySubject<AckSegment>();
+
+      async function sendAckSegment(ackSegment: AckSegment) {
+        await wait(Math.random() * 20 + 30);
+        ackSegmentStream.next(ackSegment);
+      }
+
+      async function sendDataSegment(dataSegment: DataSegment) {
+        await wait(Math.random() * 20 + 30);
+        dataSegmentStream.next(dataSegment);
+      }
+
+      const receiver = createReceiver({
+        dataSegmentStream,
+        sendAckSegment,
+        segmentSizeInBytes,
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      })
+
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        segmentSizeInBytes,
+        segmentTimeout,
+        windowSize
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      });
+
+      send(exampleMessage);
+
+      const messageReceived = (await receiver.take(1).toPromise()).toString();
+
+      expect(messageReceived).to.be.equal(exampleMessage);
     }
   );
 });

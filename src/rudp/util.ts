@@ -250,6 +250,10 @@ export class AsyncBlockingQueue<T> {
   }
 }
 
-export function clearStack () {
+export function clearStack() {
   return new Promise(resolve => setTimeout(() => resolve(), 0));
+}
+
+export function wait(milliseconds: number) {
+  return new Promise(resolve => setTimeout(() => resolve(), milliseconds));
 }
