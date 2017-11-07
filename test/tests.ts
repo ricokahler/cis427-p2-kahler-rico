@@ -372,3 +372,60 @@ describe('Delay', function () {
     }
   );
 });
+
+describe('Loss', function () {
+  it(
+    oneLine`
+      Upon receiving the 2nd segment, the client will intentionally drop it to simulate its loss.
+      Upon receiving the 3rd ACK, the server will intentionally drop it to simulate its loss. 
+    `,
+    async function () {
+      const dataSegmentStream = new ReplaySubject<DataSegment>();
+      const ackSegmentStream = new ReplaySubject<AckSegment>();
+
+      let dataSegmentCount = 0;
+      async function sendDataSegment(dataSegment: DataSegment) {
+        dataSegmentCount += 1;
+        // Upon receiving the 2nd segment, client will intentionally drop it to simulate its loss.
+        if (dataSegmentCount !== 2) {
+          dataSegmentStream.next(dataSegment);
+        }
+      }
+
+      let ackSegmentCount = 0;
+      async function sendAckSegment(ackSegment: AckSegment) {
+        ackSegmentCount += 1;
+        // Upon receiving the 3rd ACK, the server will intentionally drop it to simulate its loss.
+        if (ackSegmentCount !== 3) {
+          ackSegmentStream.next(ackSegment);
+        }
+      }
+
+      const receiver = createReceiver({
+        dataSegmentStream,
+        sendAckSegment,
+        segmentSizeInBytes,
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      })
+
+      const send = createSender({
+        ackSegmentStream,
+        sendDataSegment,
+        segmentSizeInBytes,
+        segmentTimeout,
+        windowSize
+        // =========================================================================================
+        // logger: console.log.bind(console), // uncomment to enable logging
+        // =========================================================================================
+      });
+
+      send(exampleMessage);
+
+      const messageReceived = (await receiver.take(1).toPromise()).toString();
+
+      expect(messageReceived).to.be.equal(exampleMessage);
+    }
+  );
+});
