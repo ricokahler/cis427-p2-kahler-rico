@@ -4,266 +4,74 @@ import { expect } from 'chai';
 import * as uuid from 'uuid/v4';
 import { range } from 'lodash';
 import { Observable, Observer, ReplaySubject } from 'rxjs';
+import { oneLine } from 'common-tags';
 
-import { DeferredPromise } from '../src/rudp/task-queue';
-import {
-  DataSegment, AckSegment, findNextSequenceNumber, createMessageStream,
-  sendMessageWithWindow
-} from '../src/rudp';
+import { DataSegment, AckSegment } from '../src/rudp';
 
-describe('findNextSequenceNumber', function () {
-  it('finds the next sequence number from the middle', function () {
-    const dataSegments = [
-      { seq: 0 },
-      undefined, // { seqAck: 100 }, // this one is missing
-      { seq: 200 },
-      undefined, // { seqAck: 300 }, // this one is also missing
-      { seq: 400 },
-      { seq: 500 },
-    ] as DataSegment[];
+import { createSender } from '../src/rudp/sender';
+import { createReceiver } from '../src/rudp/receiver';
 
-    expect(findNextSequenceNumber(dataSegments, 100)).to.be.equal(100);
-  });
+import { AsyncBlockingQueue } from '../src/rudp/util';
 
-  it('finds the next sequence number from the start', function () {
-    const dataSegments = [
-      undefined,
-      { seq: 100 },
-      { seq: 200 },
-      undefined, // { seqAck: 300 }, // this one is missing
-      { seq: 400 },
-      { seq: 500 },
-    ] as DataSegment[];
+const exampleMessage = 'The quick brown fox jumps over the lazy dog.';
+const segmentSizeInBytes = 4;
 
-    expect(findNextSequenceNumber(dataSegments, 100)).to.be.equal(0);
-  });
+describe('Cumulative acknowledgement', function () {
+  it(
+    oneLine`
+      Upon receiving a segment from the server, the client will respond with a cumulative
+      acknowledgment.
+    `,
+    async function () {
+      const messageId = uuid();
 
-  it('finds the next sequence number at the end', function () {
-    const dataSegments = [
-      { seq: 0 },
-      { seq: 100 },
-      { seq: 200 },
-      { seq: 300 }, // this one is missing
-      { seq: 400 },
-      { seq: 500 },
-    ] as DataSegment[];
-
-    expect(findNextSequenceNumber(dataSegments, 100)).to.be.equal(600);
-  });
-});
-
-describe('createMessageStream', function () {
-  it('receives segments, sends acknowledgements, and pushes complete buffers', async function () {
-    const messageId = uuid();
-
-    const message = 'The quick brown fox jumps over the lazy dog.';
-    const segmentSize = 4;
-    const bufferFromMessage = new Buffer(message);
-    const buffers = (range(Math.ceil(bufferFromMessage.byteLength / segmentSize))
-      .map(i => segmentSize * i)
-      .map(sequenceNumber => ({
-        sequenceNumber,
-        buffer: bufferFromMessage.slice(sequenceNumber, sequenceNumber + segmentSize)
-      }))
-    );
-
-    const segmentStream = Observable.create((observer: Observer<Segment>) => {
-      for (let { sequenceNumber, buffer } of buffers) {
-        observer.next({ messageId, seqAck: sequenceNumber, data: buffer });
-      }
-      observer.next({ messageId, seqAck: buffers.length * segmentSize, last: true });
-      // observer.complete();
-    }) as Observable<Segment>;
-
-    const acks = [] as number[];
-
-    const sendSegment = (segment: Segment) => {
-      acks.push(segment.seqAck);
-      return Promise.resolve();
-    }
-
-    const messageStream = await createMessageStream({
-      segmentStream, sendSegment, segmentSizeInBytes: segmentSize
-    });
-    const finalBuffer = await messageStream.take(1).toPromise();
-    expect(finalBuffer.toString()).to.be.equal(message);
-    expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
-  });
-
-  it('push message when a segment is out of order', async function () {
-    const messageId = uuid();
-
-    const message = 'The quick brown fox jumps over the lazy dog.';
-    const segmentSize = 4;
-    const bufferFromMessage = new Buffer(message);
-    const totalBuffers = Math.ceil(bufferFromMessage.byteLength / segmentSize);
-    const indexToSkip = Math.floor(totalBuffers / 2);
-    const buffers = (range(totalBuffers)
-      .filter(i => i !== indexToSkip)
-      .map(i => segmentSize * i)
-      .map(sequenceNumber => ({
-        sequenceNumber,
-        buffer: bufferFromMessage.slice(sequenceNumber, sequenceNumber + segmentSize)
-      }))
-    );
-
-    const segmentStream = new ReplaySubject<Segment>();
-    // segmentStream.subscribe(seq => console.log('sending seq: ', seq.seqAck));
-    for (let { sequenceNumber, buffer } of buffers) {
-      segmentStream.next({ messageId, seqAck: sequenceNumber, data: buffer });
-    }
-    segmentStream.next({ messageId, seqAck: (buffers.length + 1) * segmentSize, last: true });
-
-    const acks = [] as number[];
-    const cumulativeAcks = [] as number[];
-
-    const sendSegment = (segment: Segment) => {
-      // console.log('ack', segment.seqAck);
-      acks.push(segment.seqAck);
-      cumulativeAcks[segment.seqAck] = (/*if*/ cumulativeAcks[segment.seqAck] === undefined
-        ? 1
-        : cumulativeAcks[segment.seqAck] + 1
+      const buffer = new Buffer(exampleMessage);
+      const dataSegmentsToSend = (range(buffer.byteLength / segmentSizeInBytes)
+        .map(i => i * segmentSizeInBytes)
+        .map(seq => {
+          const dataSegment: DataSegment = {
+            messageId,
+            seq,
+            data: buffer.slice(seq, seq + segmentSizeInBytes)
+          };
+          return dataSegment;
+        })
       );
-      if (cumulativeAcks[segment.seqAck] >= 3) {
-        // send the missing one
-        segmentStream.next({
-          messageId,
-          seqAck: indexToSkip * segmentSize,
-          data: bufferFromMessage.slice(indexToSkip * segmentSize, (indexToSkip + 1) * segmentSize),
-        });
+      dataSegmentsToSend.push({
+        seq: dataSegmentsToSend.length * segmentSizeInBytes,
+        messageId,
+        last: true,
+        data: new Buffer(''),
+      })
+
+      const ackStream = new AsyncBlockingQueue<AckSegment>();
+
+      async function sendAckSegment(ackSegment: AckSegment) {
+        ackStream.enqueue(ackSegment);
       }
-      return Promise.resolve();
+
+      const dataSegmentStream = Observable.create(async (observer: Observer<DataSegment>) => {
+        for (let dataSegment of dataSegmentsToSend) {
+          observer.next(dataSegment);
+
+          // WAITS FOR THE ACK
+          const ackSegment = await ackStream.dequeue();
+          // CHECKS TO SEE IF THE ACK IS THE NEXT EXPECTED SEGMENT
+          expect(ackSegment.ack).to.be.equal(dataSegment.seq + segmentSizeInBytes);
+        }
+      }) as Observable<DataSegment>;
+
+      const messageStream = createReceiver({
+        dataSegmentStream,
+        segmentSizeInBytes,
+        sendAckSegment,
+        logger: console.log.bind(console),
+      });
+
+      const message = (await messageStream.take(1).toPromise()).toString();
+
+      expect(message).to.be.equal(exampleMessage);
     }
-
-
-    const messageStream = await createMessageStream({
-      segmentStream, sendSegment, segmentSizeInBytes: segmentSize
-    });
-    const finalBuffer = await messageStream.take(1).toPromise();
-    expect(finalBuffer.toString()).to.be.equal(message);
-    // expect(acks).to.be.deep.equal(range(buffers.length + 1).map(i => i + 1).map(i => i * segmentSize))
-  });
+  );
 });
 
-describe('sendMessageWithWindow', function () {
-  it('sends a message using a sliding window', async function () {
-    const message = 'The quick brown fox jumps over the lazy dog.';
-    const segmentSize = 4;
-    const windowSize = 3;
-    const segmentTimeout = 2000;
-
-    const segmentsSent = [] as Segment[];
-    const segmentStream = new ReplaySubject<Segment>();
-
-    const sendSegment = async (segment: Segment) => {
-      const messageId = segment.messageId;
-      segmentsSent.push(segment);
-      segmentStream.next({ messageId, seqAck: segment.seqAck + segmentSize });
-      return Promise.resolve();
-    }
-
-    await sendMessageWithWindow(message, {
-      sendSegment,
-      segmentStream,
-      segmentSizeInBytes: segmentSize,
-      windowSize,
-      segmentTimeout,
-    });
-
-    const finalBuffer = Buffer.concat(
-      segmentsSent.map(segment => segment.data).filter(x => x) as Buffer[]
-    );
-
-    expect(finalBuffer.toString()).to.be.equal(message);
-  });
-
-  it('fast re-transmits', async function () {
-    const message = 'The quick brown fox jumps over the lazy dog.';
-    const segmentSize = 4;
-    const windowSize = 3;
-    const segmentTimeout = 2000;
-    const segmentSeqToRetransmit = segmentSize * 3;
-
-    const segmentsReceived = [] as Segment[];
-    const seqAcks = [] as ({ ack: number } | { seq: number })[];
-    const ackStream = new ReplaySubject<Segment>();
-    const messageIdDeferred = new DeferredPromise<string>();
-
-    // mocks the interface for sending a segment
-    const sendSegment = async (segment: Segment) => {
-      const messageId = segment.messageId;
-      segmentsReceived.push(segment);
-      seqAcks.push({ seq: segment.seqAck });
-      seqAcks.push({ ack: segment.seqAck + segmentSize })
-      if (messageIdDeferred.state === 'pending') {
-        messageIdDeferred.resolve(segment.messageId);
-      }
-      ackStream.next({ messageId, seqAck: segment.seqAck + segmentSize });
-      return Promise.resolve();
-    }
-
-    messageIdDeferred.then(messageId => {
-      ackStream.next({ messageId, seqAck: segmentSeqToRetransmit });
-      ackStream.next({ messageId, seqAck: segmentSeqToRetransmit });
-      ackStream.next({ messageId, seqAck: segmentSeqToRetransmit });
-    });
-
-    await sendMessageWithWindow(message, {
-      sendSegment,
-      segmentStream: ackStream,
-      segmentSizeInBytes: segmentSize,
-      windowSize,
-      segmentTimeout,
-    });
-
-    // uncomment to see seq-acks
-    // console.log(seqAcks)
-
-    const segmentCount = segmentsReceived.reduce((segmentCount, segment) => {
-      return (/*if*/ segment.seqAck === segmentSeqToRetransmit
-        ? segmentCount + 1
-        : segmentCount
-      );
-    }, 0);
-
-    // did the segment re-transmit more than once?
-    expect(segmentCount > 1).to.be.equal(true);
-
-    const finalBuffer = Buffer.concat(segmentsReceived.reduce((inOrder, next) => {
-      inOrder[next.seqAck / segmentSize] = next;
-      return inOrder;
-    }, [] as Segment[]).map(segment => segment.data as Buffer).filter(x => x));
-
-    expect(finalBuffer.toString()).to.be.equal(message);
-  });
-});
-
-
-describe('sendMessageWithWindow and createMessageStream', function () {
-  it('sendMessageWithWindow should be consumed by createMessageStream', async function () {
-    const message = 'The quick brown fox jumps over the lazy dog.';
-    const segmentSizeInBytes = 4;
-    const windowSize = 3;
-    const segmentTimeout = 2000;
-
-    const dataStream = new ReplaySubject<Segment>();
-    const ackStream = new ReplaySubject<Segment>();
-
-    const messageStream = createMessageStream({
-      segmentStream: dataStream,
-      sendSegment: async (segment: Segment) => ackStream.next(segment),
-      segmentSizeInBytes,
-    });
-
-    sendMessageWithWindow(message, {
-      segmentStream: ackStream,
-      sendSegment: async (segment: Segment) => dataStream.next(segment),
-      segmentSizeInBytes,
-      segmentTimeout,
-      windowSize,
-    });
-
-    const messageThrough = (await messageStream.take(1).toPromise()).toString();
-    expect(messageThrough).to.be.equal(message);
-  });
-})

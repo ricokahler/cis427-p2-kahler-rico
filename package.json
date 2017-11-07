@@ -9,9 +9,11 @@
   "author": "Rico Kahler",
   "license": "MIT",
   "dependencies": {
+    "@types/common-tags": "^1.4.0",
     "@types/lodash": "^4.14.81",
     "@types/node": "^8.0.46",
     "@types/uuid": "^3.4.3",
+    "common-tags": "^1.4.0",
     "lodash": "^4.17.4",
     "rxjs": "^5.5.1",
     "uuid": "^3.1.0"
